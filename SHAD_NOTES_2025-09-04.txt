@@ -135,3 +135,87 @@
 
 ---------------------
 
+        5 +  ## Fork Development Context
+        6 +  
+        7 +  **CRITICAL**: This is a FORK of ByteDance's actively maintained Protenix project. ByteDance processes PRs rapidly (35 closed, 0 open), requiring special development
+          +  practices:
+        8 +  
+        9 +  ### Fork Constraints
+       10 +  1. **Daily Upstream Sync**: Always fetch and rebase from upstream/main
+       11 +  2. **48-Hour PR Rule**: Submit PRs within 48 hours to avoid conflicts
+       12 +  3. **Small Changes**: Keep PRs under 500 lines, 10 files maximum
+       13 +  4. **Upstream First**: Prioritize changes that can be contributed back
+       14 +  5. **Isolation**: Keep fork-specific features in `fork_features/` directory
+       15 +  
+       16 +  ### Our Fork Focus
+       17 +  - **Priority 1**: Fix bugs affecting community (#182, #185, #176, #186)
+       18 +  - **Priority 2**: Improve usability and documentation
+       19 +  - **Priority 3**: Add enterprise features (isolated in fork_features/)
+       20 +  - **Priority 4**: Two-pass prediction system for drug discovery
+       21 +  
+
+-------------------
+
+● Excellent! I've successfully updated all the documentation with the critical information about fork development and testing. Here's a summary of what was done:
+
+  📋 Key Updates Made:
+
+  1. Branch Strategy Established
+
+  - Created internal/documentation branch for our internal docs
+  - These files will NEVER be included in upstream PRs
+  - For upstream work, we'll use branches like shadnygren/adding-tests
+
+  2. TESTING.md Enhanced with:
+
+  - Current ByteDance test structure (they use unittest framework)
+  - Their test patterns from commit ce20bed4
+  - Test templates for priority bugs (#182, #185, #176)
+  - Critical principle: Every bug fix must include a test that fails before and passes after the fix
+  - Clear warnings about internal files that must never be in PRs
+
+  3. Created .gitignore-internal
+
+  Lists all files that should never go upstream:
+  - Internal documentation (ARCHITECTURE.md, CLAUDE.md, etc.)
+  - Any files with SHAD in the name
+  - Fork-specific directories
+
+  4. Updated All Strategic Docs with warnings about:
+
+  - Never submitting internal documentation to upstream
+  - Keeping PRs focused and small (<500 lines)
+  - 48-hour PR submission window
+  - Following ByteDance's CONTRIBUTING.md guidelines
+
+  🎯 Next Steps for Bug Fixes:
+
+  When you're ready to create tests for the priority bugs, you should:
+
+  1. Create a clean branch from upstream/main (not from internal/documentation):
+  git checkout main
+  git fetch upstream
+  git rebase upstream/main
+  git checkout -b shadnygren/adding-tests
+
+  2. Add only the test files for bugs:
+  - tests/test_installation.py for #182
+  - tests/test_triton_compatibility.py for #185
+  - tests/test_esm_loading.py for #176
+
+  3. Submit PR within 48 hours with:
+  - The test files only
+  - Clear commit message following their format
+  - Link to the relevant issue
+
+  The key insight is that ByteDance processes PRs very quickly (35 closed, 0 open), so we need to work in small, focused sprints and submit immediately to avoid merge conflicts.
+
+----------------
+
+  Branch naming strategy:
+  - shadnygren/adding-tests - Perfect for upstream PRs with test additions
+  - shadnygren/fix-issue-182 - For specific bug fixes going upstream
+  - internal/doc-updates - For our internal documentation work that stays in our fork
+  
+----------------------
+
