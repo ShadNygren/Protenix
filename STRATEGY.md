@@ -14,6 +14,7 @@ Given ByteDance's rapid development pace (35 closed PRs, 0 open):
 - **Non-Breaking Additions**: All enhancements must be additive
 - **Fast Iteration**: Complete features quickly before upstream changes
 - **Respect Architecture**: Never modify core design patterns
+- **NEVER Submit Internal Docs**: Files like STRATEGY.md, CLAUDE.md, ROADMAP.md, etc. must NEVER be in PRs
 
 ### 2. Enterprise Focus
 - **Production Ready**: Prioritize stability, monitoring, and reliability

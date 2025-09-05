@@ -8,6 +8,14 @@
 3. **Deterministic Results**: No random test data - only fixed, versioned fixtures
 4. **Fork Compatibility**: All tests must pass on both fork and upstream
 5. **Upstream First**: Test changes that will be contributed upstream
+6. **Bug Fix = Test Case**: Every bug fix PR must include a test that fails before and passes after
+
+### CRITICAL: Internal Files Must Never Be in PRs
+**These files must NEVER be included in upstream PRs:**
+- `ARCHITECTURE.md`, `CLAUDE.md`, `DESIGN.md`, `ROADMAP.md`, `STRATEGY.md`, `TESTING.md`
+- Any file with `*SHAD*` in the filename
+- `fork_features/` directory
+- `tests_fork/` directory
 
 ## Fork Testing Strategy
 
@@ -42,13 +50,50 @@ Tests for our enhancements:
 - Cloud deployment
 - Monitoring endpoints
 
-## Test Structure
+## Current Test Structure (ByteDance)
+
+### Existing Tests
+ByteDance uses `unittest` framework with the following tests:
+```
+tests/                      # Upstream tests (we can ADD to these)
+├── __init__.py
+├── test_attention_pair_bias.py    # AttentionPairBias module
+├── test_condition_transition.py   # ConditionedTransitionBlock
+├── test_diffusion_transformer.py  # Diffusion transformer
+├── test_frame.py                  # Frame operations
+├── test_local_rearrange.py        # Local rearrangement
+├── test_lr_schedule.py            # Learning rate scheduling
+├── test_utils.py                  # Utility functions
+└── test_weighted_rigid_align.py   # Weighted rigid alignment
+```
+
+### ByteDance Test Pattern
+```python
+import unittest
+import torch
+
+class TestModuleName(unittest.TestCase):
+    def setUp(self):
+        self._start_time = time.time()
+        # Initialize test conditions
+        
+    def tearDown(self):
+        # Log test duration
+        elapsed = time.time() - self._start_time
+        print(f"Test took {elapsed:.3f}s")
+        
+    def test_functionality(self):
+        # Test with deterministic inputs
+        x = torch.rand([batch_size, ...])
+        result = module(x)
+        self.assertEqual(result.shape, expected_shape)
+```
+
+## Our Test Structure
 
 ### Directory Organization
 ```
-tests/                      # Upstream tests (don't modify)
-├── test_*.py              # Original test files
-└── __init__.py
+tests/                      # Upstream tests (we ADD tests here for PRs)
 
 tests_fork/                 # Our additional tests
 ├── harness/               # Test infrastructure ONLY
@@ -158,6 +203,76 @@ LAST_SYNC_DATE = "2025-01-01"
 
 # Fixture changes must increment version
 # Breaking changes require major version bump
+```
+
+## Priority Bug Fix Tests
+
+### Tests Needed for Current Issues
+
+#### Issue #182: Pip Installation Error
+```python
+# tests/test_installation.py
+import unittest
+import subprocess
+import sys
+
+class TestInstallation(unittest.TestCase):
+    """Test that package installs correctly without Pydantic errors"""
+    
+    def test_deepspeed_pydantic_compatibility(self):
+        """Verify DeepSpeed and Pydantic versions are compatible"""
+        try:
+            import deepspeed
+            import pydantic
+            # Should not raise TypeError about json_schema_input_schema
+            from deepspeed.runtime.config import DeepSpeedConfig
+            self.assertTrue(True)
+        except TypeError as e:
+            if "json_schema_input_schema" in str(e):
+                self.fail(f"Pydantic/DeepSpeed compatibility issue: {e}")
+```
+
+#### Issue #185: Triton Version Compatibility
+```python
+# tests/test_triton_compatibility.py
+import unittest
+import torch
+
+class TestTritonCompatibility(unittest.TestCase):
+    """Test Triton kernel compatibility across GPU types"""
+    
+    def test_triton_import(self):
+        """Verify Triton components import correctly"""
+        try:
+            from protenix.model.tri_attention import op
+            self.assertTrue(True)
+        except ImportError as e:
+            if "Not Supported" in str(e):
+                self.skipTest("Triton not supported on this GPU")
+                
+    def test_fallback_to_torch(self):
+        """Verify torch fallback works when Triton fails"""
+        # Test that trimul_kernel="torch" works as fallback
+        from protenix.model.modules import triangular_multiplicative_update
+        # Should work with torch backend
+```
+
+#### Issue #176: ESM Weights Loading Error
+```python
+# tests/test_esm_loading.py
+import unittest
+
+class TestESMLoading(unittest.TestCase):
+    """Test ESM model loading with PyTorch 2.6+"""
+    
+    def test_esm_weights_load(self):
+        """Verify ESM weights load correctly in PyTorch 2.6+"""
+        import torch
+        if torch.__version__ >= "2.6":
+            # Test loading ESM weights doesn't fail
+            from protenix.data.compute_esm import load_esm_model
+            model = load_esm_model()
+            self.assertIsNotNone(model)
 ```
 
 ## Test Implementation

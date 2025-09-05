@@ -1,0 +1,22 @@
+# Internal documentation - NEVER submit to upstream
+ARCHITECTURE.md
+CLAUDE.md
+DESIGN.md
+ROADMAP.md
+STRATEGY.md
+TESTING.md
+
+# Personal notes - NEVER submit to upstream
+*SHAD*
+SHAD_*.txt
+SHAD_*.md
+shad_*.txt
+shad_*.md
+
+# Fork-specific directories
+fork_features/
+tests_fork/
+
+# Internal configuration
+.internal/
+.private/

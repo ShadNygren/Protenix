@@ -9,6 +9,8 @@ Enhance Protenix as a fork while maintaining upstream compatibility, focusing on
 - Keep changes small and focused (<500 lines)
 - Prioritize upstream-compatible improvements
 - Isolate fork-specific features in separate modules
+- **NEVER include internal documentation in PRs** (ROADMAP.md, CLAUDE.md, STRATEGY.md, etc.)
+- **NEVER include files with SHAD in the filename**
 
 ## Current State (v0.5.0)
 - ✅ AlphaFold 3 reproduction with competitive accuracy
