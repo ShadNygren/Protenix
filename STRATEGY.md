@@ -16,6 +16,148 @@ Given ByteDance's rapid development pace (35 closed PRs, 0 open):
 - **Respect Architecture**: Never modify core design patterns
 - **NEVER Submit Internal Docs**: Files like STRATEGY.md, CLAUDE.md, ROADMAP.md, etc. must NEVER be in PRs
 
+## Branch Management Strategy
+
+### Branch Hierarchy
+```
+upstream/main (ByteDance)
+    ↓ (sync daily)
+    main (our tracking branch)
+    ↓
+    merge (integration point for all features)
+    ├→ develop (6.8GB devel image, active development)
+    ↓
+    base (3.3GB runtime image, stable features)
+    ↓
+    testing (QA and integration testing)
+    ↓
+    release (production ready)
+```
+
+### Branch Purposes
+
+#### `main`
+- **Purpose**: Clean mirror of upstream/main
+- **Updates**: Daily sync from ByteDance
+- **Changes**: NEVER commit directly
+- **Use**: Reference point for PRs to upstream
+
+#### `merge`
+- **Purpose**: Integration branch for all feature branches
+- **Updates**: Merge completed features and fixes
+- **Testing**: Verify all changes work with latest upstream
+- **Docker**: No automatic builds
+- **Children**: Both `develop` (sibling) and `base` (main pipeline)
+
+#### `develop`
+- **Purpose**: Active development with full tooling
+- **Docker**: Uses `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel` (6.8GB)
+- **Features**: CUDA development tools, compilers, debuggers
+- **Use**: When building custom kernels or extensive debugging
+- **Note**: Sibling branch to `base`, not in main release pipeline
+
+#### `base`
+- **Purpose**: Stable features with runtime image
+- **Docker**: Uses `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime` (3.3GB)
+- **Triggers**: GitHub Actions Docker build → ghcr.io
+- **Use**: Standard deployments, most development
+- **Pipeline**: Main path to production release
+
+#### `testing`
+- **Purpose**: QA validation before release
+- **Testing**: Full test suite, integration tests, benchmarks
+- **Docker**: Tagged as `ghcr.io/shadnygren/protenix:testing`
+- **Promotion**: Only after all tests pass
+
+#### `release`
+- **Purpose**: Production-ready versions
+- **Docker**: Tagged as `ghcr.io/shadnygren/protenix:release`
+- **Stability**: Only thoroughly tested code
+- **Tags**: Semantic versioning (v1.0.0, v1.1.0, etc.)
+
+### Feature Branch Workflow
+
+1. **Create feature branch from `merge`**:
+   ```bash
+   git checkout merge
+   git checkout -b shadnygren/feature-xyz
+   ```
+
+2. **Develop and test locally**
+
+3. **Merge to `merge` for integration testing**:
+   ```bash
+   git checkout merge
+   git merge shadnygren/feature-xyz
+   ```
+
+4. **If contributing upstream**:
+   - Create clean branch from `main`
+   - Cherry-pick only upstream-appropriate changes
+   - Submit PR within 48 hours
+
+5. **Propagate through pipeline**:
+   ```bash
+   Main pipeline: merge → base → testing → release
+   Dev pipeline:  merge → develop (for development tools)
+   ```
+
+### Pull Request Strategy
+
+#### Upstream PRs (to ByteDance)
+- Branch from: `main` (always clean)
+- Size: <500 lines, <10 files
+- Content: Only bug fixes and improvements
+- Exclude: Internal docs, Docker changes, fork-specific features
+- Timeline: Submit within 48 hours
+
+#### Internal PRs (within fork)
+- Branch from: `merge`
+- Review: Can be larger, more complex
+- Content: Any improvements including Docker, docs, architecture
+- Timeline: No rush, thorough testing
+
+### Docker Image Strategy
+
+#### Development Image (`develop` branch)
+```dockerfile
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
+# 6.8GB image with full development tools
+# CUDA toolkit, compilers, debuggers
+```
+
+#### Runtime Image (`base` branch)
+```dockerfile
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime  
+# 3.3GB optimized runtime image
+# Production deployments
+```
+
+### Merge Guidelines
+
+1. **Daily upstream sync**:
+   ```bash
+   git checkout main
+   git fetch upstream
+   git merge upstream/main
+   git push origin main
+   ```
+
+2. **Feature integration**:
+   ```bash
+   git checkout merge
+   git merge main  # Get latest upstream
+   git merge shadnygren/feature-xyz  # Add feature
+   # Run tests
+   git push origin merge
+   ```
+
+3. **Promotion pipeline**:
+   - `merge` → `base`: After integration tests pass (main pipeline)
+   - `merge` → `develop`: For features needing development tools (sibling)
+   - `base` → `testing`: After Docker build succeeds
+   - `testing` → `release`: After full QA cycle
+
 ### 2. Enterprise Focus
 - **Production Ready**: Prioritize stability, monitoring, and reliability
 - **Cloud Native**: Design for Kubernetes and containerized deployment

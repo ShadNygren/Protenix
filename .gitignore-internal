@@ -1,10 +1,15 @@
 # Internal documentation - NEVER submit to upstream
 ARCHITECTURE.md
+BRANCH-FLOW.md
 CLAUDE.md
 DESIGN.md
+DOCKER.md
 ROADMAP.md
 STRATEGY.md
 TESTING.md
+
+# Internal setup scripts - NEVER submit to upstream
+setup-internal-protections.sh
 
 # Personal notes - NEVER submit to upstream
 *SHAD*
