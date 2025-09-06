@@ -24,7 +24,7 @@ upstream/main (ByteDance)
     ↓ (sync daily)
     main (our tracking branch)
     ↓
-    merge (integration point for all features)
+    merged-updates (integration point for all features)
     ├→ develop (6.8GB devel image, active development)
     ↓
     base (3.3GB runtime image, stable features)
@@ -42,7 +42,7 @@ upstream/main (ByteDance)
 - **Changes**: NEVER commit directly
 - **Use**: Reference point for PRs to upstream
 
-#### `merge`
+#### `merged-updates`
 - **Purpose**: Integration branch for all feature branches
 - **Updates**: Merge completed features and fixes
 - **Testing**: Verify all changes work with latest upstream
@@ -77,18 +77,18 @@ upstream/main (ByteDance)
 
 ### Feature Branch Workflow
 
-1. **Create feature branch from `merge`**:
+1. **Create feature branch from `merged-updates`**:
    ```bash
-   git checkout merge
+   git checkout merged-updates
    git checkout -b shadnygren/feature-xyz
    ```
 
 2. **Develop and test locally**
 
-3. **Merge to `merge` for integration testing**:
+3. **Merge to `merged-updates` for integration testing**:
    ```bash
-   git checkout merge
-   git merge shadnygren/feature-xyz
+   git checkout merged-updates
+   git merged-updates shadnygren/feature-xyz
    ```
 
 4. **If contributing upstream**:
@@ -98,8 +98,8 @@ upstream/main (ByteDance)
 
 5. **Propagate through pipeline**:
    ```bash
-   Main pipeline: merge → base → testing → release
-   Dev pipeline:  merge → develop (for development tools)
+   Main pipeline: merged-updates → base → testing → release
+   Dev pipeline:  merged-updates → develop (for development tools)
    ```
 
 ### Pull Request Strategy
@@ -112,7 +112,7 @@ upstream/main (ByteDance)
 - Timeline: Submit within 48 hours
 
 #### Internal PRs (within fork)
-- Branch from: `merge`
+- Branch from: `merged-updates`
 - Review: Can be larger, more complex
 - Content: Any improvements including Docker, docs, architecture
 - Timeline: No rush, thorough testing
@@ -139,22 +139,22 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
    ```bash
    git checkout main
    git fetch upstream
-   git merge upstream/main
+   git merged-updates upstream/main
    git push origin main
    ```
 
 2. **Feature integration**:
    ```bash
-   git checkout merge
-   git merge main  # Get latest upstream
-   git merge shadnygren/feature-xyz  # Add feature
+   git checkout merged-updates
+   git merged-updates main  # Get latest upstream
+   git merged-updates shadnygren/feature-xyz  # Add feature
    # Run tests
-   git push origin merge
+   git push origin merged-updates
    ```
 
 3. **Promotion pipeline**:
-   - `merge` → `base`: After integration tests pass (main pipeline)
-   - `merge` → `develop`: For features needing development tools (sibling)
+   - `merged-updates` → `base`: After integration tests pass (main pipeline)
+   - `merged-updates` → `develop`: For features needing development tools (sibling)
    - `base` → `testing`: After Docker build succeeds
    - `testing` → `release`: After full QA cycle
 

@@ -5,7 +5,7 @@
 ```mermaid
 graph TD
     UM[upstream/main ByteDance] -->|daily sync| M[main - clean mirror]
-    M -->|features ready| MERGE[merge - integration]
+    M -->|features ready| MERGE[merged-updates - integration]
     
     MERGE -->|development tools needed| DEV[develop - 6.8GB devel]
     MERGE -->|main pipeline| BASE[base - 3.3GB runtime]
@@ -27,24 +27,24 @@ graph TD
 ### Upstream Synchronization
 ```
 ByteDance → main (daily)
-main → merge (after testing)
+main → merged-updates (after testing)
 ```
 
 ### Feature Development
 ```
-feature-branch → merge
-bug-fix-branch → merge
-test-branch → merge
+feature-branch → merged-updates
+bug-fix-branch → merged-updates
+test-branch → merged-updates
 ```
 
 ### Release Pipeline (Primary)
 ```
-merge → base → testing → release
+merged-updates → base → testing → release
 ```
 
 ### Development Pipeline (Secondary)
 ```
-merge → develop (sibling to base)
+merged-updates → develop (sibling to base)
 ```
 
 ## Quick Reference Commands
@@ -54,26 +54,26 @@ merge → develop (sibling to base)
 # Every morning, sync with ByteDance
 git checkout main
 git fetch upstream
-git merge upstream/main --ff-only
+git merged-updates upstream/main --ff-only
 git push origin main
 
-# Update merge branch
-git checkout merge
-git merge main
-git push origin merge
+# Update merged-updates branch
+git checkout merged-updates
+git merged-updates main
+git push origin merged-updates
 ```
 
 ### 2. Feature Development
 ```bash
 # Start new feature
-git checkout merge
-git pull origin merge
+git checkout merged-updates
+git pull origin merged-updates
 git checkout -b shadnygren/feature-xyz
 
 # After development
-git checkout merge
-git merge shadnygren/feature-xyz
-git push origin merge
+git checkout merged-updates
+git merged-updates shadnygren/feature-xyz
+git push origin merged-updates
 ```
 
 ### 3. Upstream Contribution
@@ -94,19 +94,19 @@ git push origin shadnygren/fix-issue-123
 ```bash
 # Promote to base (runtime image)
 git checkout base
-git merge merge
+git merged-updates merged-updates
 git push origin base
 # Wait for Docker build
 
 # Promote to testing
 git checkout testing
-git merge base
+git merged-updates base
 git push origin testing
 # Run full test suite
 
 # Promote to release
 git checkout release
-git merge testing
+git merged-updates testing
 git tag v1.0.0
 git push origin release --tags
 ```
@@ -115,7 +115,7 @@ git push origin release --tags
 ```bash
 # Update development branch (not in release pipeline)
 git checkout develop
-git merge merge
+git merged-updates merged-updates
 git push origin develop
 # Docker build with development tools
 ```
@@ -127,9 +127,9 @@ git push origin develop
 - **No PRs** (clean mirror only)
 - **Auto-sync**: Daily from upstream/main
 
-### `merge`
+### `merged-updates`
 - **Require PR reviews** for external contributors
-- **Run tests** before merge
+- **Run tests** before merged-updates
 - **No force push**
 
 ### `base`, `testing`, `release`
@@ -168,14 +168,14 @@ git push origin develop
 
 ## Merge Checklist
 
-### Before Merging to `merge`
+### Before Merging to `merged-updates`
 - [ ] Tests pass locally
-- [ ] No merge conflicts with main
+- [ ] No merged-updates conflicts with main
 - [ ] Documentation updated if needed
 - [ ] Follows coding standards
 
 ### Before Merging to `base`
-- [ ] All tests pass in merge branch
+- [ ] All tests pass in merged-updates branch
 - [ ] Docker builds successfully
 - [ ] No upstream conflicts
 - [ ] Performance benchmarks acceptable
@@ -192,7 +192,7 @@ git push origin develop
 - [ ] Documentation complete
 - [ ] Version tagged appropriately
 
-## Emergency Procedures
+## Emerged-updatesncy Procedures
 
 ### Upstream Breaking Change
 ```bash
@@ -203,9 +203,9 @@ git checkout -b hotfix/upstream-break
 # Fix and test
 # ...
 
-# Fast-track to merge
-git checkout merge
-git merge hotfix/upstream-break
+# Fast-track to merged-updates
+git checkout merged-updates
+git merged-updates hotfix/upstream-break
 
 # Propagate through pipeline quickly
 ```
@@ -223,7 +223,7 @@ git push origin release --tags
 - **Never submit internal docs** (STRATEGY.md, BRANCH-FLOW.md, etc.) to upstream
 - **48-hour rule**: Submit PRs to ByteDance within 48 hours
 - **Keep PRs small**: <500 lines for upstream contributions
-- **Test everything**: Every merge should be tested
+- **Test everything**: Every merged-updates should be tested
 - **Document changes**: Update CHANGELOG.md for significant changes
 
 ---
