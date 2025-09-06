@@ -3,16 +3,14 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - docker-pytorch-runtime
-      - docker-pytorch-devel
+      - docker-pytorch  # Consolidated branch for Docker builds
       - testing
       - release
     tags:
       - 'v*'
   pull_request:
     branches:
-      - main
-      - docker-pytorch-runtime
+      - docker-pytorch
   workflow_dispatch:  # Allow manual trigger
 
 env:
@@ -22,6 +20,9 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: [runtime, devel]
     permissions:
       contents: read
       packages: write
@@ -40,31 +41,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Determine base image variant
-        id: variant
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/docker-pytorch-devel" ]]; then
-            echo "BASE_IMAGE_VARIANT=devel" >> $GITHUB_OUTPUT
-          else
-            echo "BASE_IMAGE_VARIANT=runtime" >> $GITHUB_OUTPUT
-          fi
-      
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-${{ matrix.variant }},onlatest=true
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=runtime,enable=${{ github.ref == 'refs/heads/docker-pytorch-runtime' }}
-            type=raw,value=devel,enable=${{ github.ref == 'refs/heads/docker-pytorch-devel' }}
-            type=raw,value=testing,enable=${{ github.ref == 'refs/heads/testing' }}
-            type=raw,value=release,enable=${{ github.ref == 'refs/heads/release' }}
-            type=sha,prefix={{branch}}-
+            type=raw,value=${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/docker-pytorch' }}
+            type=raw,value=testing-${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/testing' }}
+            type=raw,value=release-${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/release' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/docker-pytorch' && matrix.variant == 'runtime' }}
       
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -74,10 +66,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
           build-args: |
-            BASE_IMAGE_VARIANT=${{ steps.variant.outputs.BASE_IMAGE_VARIANT }}
+            BASE_IMAGE_VARIANT=${{ matrix.variant }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}

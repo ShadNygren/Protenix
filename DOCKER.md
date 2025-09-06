@@ -41,30 +41,39 @@ Docker images are automatically built and pushed to GitHub Container Registry (g
 
 Public images will be available at:
 ```bash
+# Runtime images (3.3GB - for production)
 docker pull ghcr.io/shadnygren/protenix:runtime
-docker pull ghcr.io/shadnygren/protenix:testing
-docker pull ghcr.io/shadnygren/protenix:release
+docker pull ghcr.io/shadnygren/protenix:latest  # Same as :runtime
+
+# Development images (6.8GB - includes CUDA toolkit)
+docker pull ghcr.io/shadnygren/protenix:devel
+
+# Testing and release variants
+docker pull ghcr.io/shadnygren/protenix:testing-runtime
+docker pull ghcr.io/shadnygren/protenix:testing-devel
+docker pull ghcr.io/shadnygren/protenix:release-runtime
+docker pull ghcr.io/shadnygren/protenix:release-devel
 ```
 
 ### Branch Strategy
 
-- `develop` → Active development (no automatic Docker builds)
-- `docker-pytorch-runtime` → Stable runtime image (triggers Docker build)
-- `testing` → Testing candidate (triggers Docker build)
-- `release` → Production ready (triggers Docker build)
+- `merged-updates` → Integration branch (no automatic Docker builds)
+- `docker-pytorch` → Default branch, builds both runtime and devel images
+- `testing` → Testing candidate (builds both variants)
+- `release` → Production ready (builds both variants)
 
 ## Building Locally
 
-### Runtime Image (Recommended)
+### Runtime Image (3.3GB - Recommended for production)
 ```bash
-docker build -t protenix:local .
+docker build -t protenix:runtime-local .
+# Or explicitly specify the runtime variant
+docker build --build-arg BASE_IMAGE_VARIANT=runtime -t protenix:runtime-local .
 ```
 
-### Development Image
-1. Edit Dockerfile to uncomment the devel base image
-2. Build:
+### Development Image (6.8GB - For development/debugging)
 ```bash
-docker build -t protenix:local-dev .
+docker build --build-arg BASE_IMAGE_VARIANT=devel -t protenix:devel-local .
 ```
 
 ## Running the Container
