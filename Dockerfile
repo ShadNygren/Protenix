@@ -21,6 +21,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         g++ \
         gcc \
+        git \
         libc6-dev \
         make \
         postgresql \
