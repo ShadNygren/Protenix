@@ -26,15 +26,19 @@ jobs:
           - variant: runtime
             weights: false
             suffix: ""
+            tag_suffix: ""
           - variant: runtime
             weights: true
-            suffix: "-weights"
+            suffix: "-with-weights"
+            tag_suffix: "_weights"  # Using underscore since + is not allowed
           - variant: devel
             weights: false
             suffix: ""
+            tag_suffix: ""
           - variant: devel
             weights: true
-            suffix: "-weights"
+            suffix: "-with-weights"
+            tag_suffix: "_weights"
     permissions:
       contents: read
       packages: write
@@ -61,15 +65,16 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
-            suffix=-${{ matrix.variant }}${{ matrix.suffix }},onlatest=true
+            suffix=-${{ matrix.variant }}${{ matrix.tag_suffix }},onlatest=true
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/docker-pytorch' }}
-            type=raw,value=testing-${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/testing' }}
-            type=raw,value=release-${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/release' }}
+            type=raw,value=${{ matrix.variant }}${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/docker-pytorch' }}
+            type=raw,value=${{ matrix.variant }}_plus_weights,enable=${{ github.ref == 'refs/heads/docker-pytorch' && matrix.weights == true }}
+            type=raw,value=testing-${{ matrix.variant }}${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/testing' }}
+            type=raw,value=release-${{ matrix.variant }}${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/release' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/docker-pytorch' && matrix.variant == 'runtime' && matrix.weights == false }}
       
       - name: Build and push Docker image
@@ -85,7 +90,9 @@ jobs:
           build-args: |
             BASE_IMAGE_VARIANT=${{ matrix.variant }}
             INCLUDE_WEIGHTS=${{ matrix.weights }}
-            WEIGHTS_LABEL=${{ matrix.weights && 'with-weights' || 'without-weights' }}
+            WEIGHTS_VERSION=v0.5.0
+            WEIGHTS_URL=https://af3-dev.tos-cn-beijing.volces.com/release_model/model_v0.5.0.pt
+            WEIGHTS_MODEL_NAME=protenix_base_default_v0.5.0
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}

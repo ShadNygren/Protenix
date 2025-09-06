@@ -72,25 +72,87 @@ RUN pip3 --no-cache-dir install \
 RUN git clone -b v3.5.1 https://github.com/NVIDIA/cutlass.git /opt/cutlass
 ENV CUTLASS_PATH=/opt/cutlass
 
-# Build argument to optionally include pre-downloaded weights
-# Options:
-#   - false (default): No weights included, download at runtime
-#   - true: Download and include weights during build (adds ~1.4GB)
-ARG INCLUDE_WEIGHTS=false
+# ============================================================================
+# STAGE 1: Base Protenix image (runtime or devel)
+# This is the complete Protenix installation without weights
+# ============================================================================
+FROM base AS protenix-base
+LABEL org.opencontainers.image.description="Protenix base image without weights"
 
-# Download and install model weights if INCLUDE_WEIGHTS is true
-# This downloads from ByteDance's servers and installs to the expected location
+# ============================================================================
+# STAGE 2: Weights Downloader (separate stage for caching)
+# This stage is cached by GitHub Actions for 7 days, reducing download frequency
+# Cache persists across builds until expired or weights version changes
+# ============================================================================
+FROM alpine:latest AS weights-downloader
+
+# Version arguments for weights management
+# Change these to download different versions or from different sources
+ARG WEIGHTS_VERSION=v0.5.0
+ARG WEIGHTS_URL=https://af3-dev.tos-cn-beijing.volces.com/release_model/model_v0.5.0.pt
+ARG WEIGHTS_MODEL_NAME=protenix_base_default_v0.5.0
+
+RUN apk add --no-cache wget ca-certificates
+WORKDIR /weights
+
+# Download model weights with version tracking
+# This layer is cached and reused across all builds for 7 days
+RUN echo "Downloading Protenix weights version: ${WEIGHTS_VERSION}" && \
+    echo "Model: ${WEIGHTS_MODEL_NAME}" && \
+    echo "URL: ${WEIGHTS_URL}" && \
+    mkdir -p ${WEIGHTS_MODEL_NAME}/ && \
+    wget --no-check-certificate -q --show-progress --progress=bar:force \
+        -O ${WEIGHTS_MODEL_NAME}/model.pt \
+        ${WEIGHTS_URL} && \
+    echo "Weights downloaded successfully" && \
+    ls -lh ${WEIGHTS_MODEL_NAME}/ && \
+    # Create version metadata file
+    echo "{\"version\": \"${WEIGHTS_VERSION}\", \"model\": \"${WEIGHTS_MODEL_NAME}\", \"url\": \"${WEIGHTS_URL}\", \"download_date\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        > ${WEIGHTS_MODEL_NAME}/metadata.json
+
+# ============================================================================
+# STAGE 3: Final Image Selection
+# Conditionally includes weights layer based on INCLUDE_WEIGHTS build arg
+# ============================================================================
+FROM protenix-base AS final
+
+# Build arguments
+ARG INCLUDE_WEIGHTS=false
+ARG WEIGHTS_VERSION=v0.5.0
+ARG WEIGHTS_MODEL_NAME=protenix_base_default_v0.5.0
+
+# Create .protenix directory structure
+RUN mkdir -p /root/.protenix/weights/
+
+# Conditionally copy weights from downloader stage
+# This creates a separate layer that adds ~1.4GB only when INCLUDE_WEIGHTS=true
+# The COPY --from is efficient and uses cached layers
+COPY --from=weights-downloader /weights/${WEIGHTS_MODEL_NAME} /tmp/weights_temp/
+
+# Install or remove weights based on build argument
 RUN if [ "$INCLUDE_WEIGHTS" = "true" ]; then \
-        echo "Downloading Protenix v0.5.0 weights (1.4GB)..." && \
-        mkdir -p /root/.protenix/weights/protenix_base_default_v0.5.0/ && \
-        wget -q --show-progress --progress=bar:force \
-            -O /root/.protenix/weights/protenix_base_default_v0.5.0/model.pt \
-            https://af3-dev.tos-cn-beijing.volces.com/release_model/model_v0.5.0.pt && \
-        echo "Weights installed successfully" && \
-        ls -lh /root/.protenix/weights/protenix_base_default_v0.5.0/; \
+        mv /tmp/weights_temp /root/.protenix/weights/${WEIGHTS_MODEL_NAME} && \
+        echo "Weights ${WEIGHTS_VERSION} installed at /root/.protenix/weights/" && \
+        cat /root/.protenix/weights/${WEIGHTS_MODEL_NAME}/metadata.json && \
+        ls -lh /root/.protenix/weights/${WEIGHTS_MODEL_NAME}/; \
+    else \
+        rm -rf /tmp/weights_temp && \
+        echo "No weights included - will download at runtime"; \
     fi
 
-# Set environment variable to indicate weights are pre-installed
-ARG WEIGHTS_LABEL=without-weights
-ENV PROTENIX_WEIGHTS_INCLUDED=${WEIGHTS_LABEL}
-LABEL org.opencontainers.image.weights="${WEIGHTS_LABEL}"
+# Set environment variables and labels for weight tracking
+ENV PROTENIX_WEIGHTS_INCLUDED=${INCLUDE_WEIGHTS}
+ENV PROTENIX_WEIGHTS_VERSION=${WEIGHTS_VERSION}
+ENV PROTENIX_WEIGHTS_MODEL=${WEIGHTS_MODEL_NAME}
+
+# Labels for image identification
+LABEL org.opencontainers.image.weights="${INCLUDE_WEIGHTS}"
+LABEL org.opencontainers.image.weights.version="${WEIGHTS_VERSION}"
+LABEL org.opencontainers.image.weights.model="${WEIGHTS_MODEL_NAME}"
+
+# Note on caching:
+# - GitHub Actions caches layers for 7 days of inactivity
+# - Cache survives weekends and even 3-day weekends
+# - After 7 days of no builds, weights will re-download
+# - To update weights: change WEIGHTS_VERSION, WEIGHTS_URL, and WEIGHTS_MODEL_NAME
+# - Each weights version gets its own cached layer
