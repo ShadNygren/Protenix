@@ -22,7 +22,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        variant: [runtime, devel]
+        include:
+          - variant: runtime
+            weights: false
+            suffix: ""
+          - variant: runtime
+            weights: true
+            suffix: "-weights"
+          - variant: devel
+            weights: false
+            suffix: ""
+          - variant: devel
+            weights: true
+            suffix: "-weights"
     permissions:
       contents: read
       packages: write
@@ -30,6 +42,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          lfs: ${{ matrix.weights }}  # Only checkout LFS files for weights variants
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -47,16 +61,16 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: |
-            suffix=-${{ matrix.variant }},onlatest=true
+            suffix=-${{ matrix.variant }}${{ matrix.suffix }},onlatest=true
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/docker-pytorch' }}
-            type=raw,value=testing-${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/testing' }}
-            type=raw,value=release-${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/release' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/docker-pytorch' && matrix.variant == 'runtime' }}
+            type=raw,value=${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/docker-pytorch' }}
+            type=raw,value=testing-${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/testing' }}
+            type=raw,value=release-${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/release' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/docker-pytorch' && matrix.variant == 'runtime' && matrix.weights == false }}
       
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -66,10 +80,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.variant }}${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}${{ matrix.suffix }}
           build-args: |
             BASE_IMAGE_VARIANT=${{ matrix.variant }}
+            INCLUDE_WEIGHTS=${{ matrix.weights }}
+            WEIGHTS_LABEL=${{ matrix.weights && 'with-weights' || 'without-weights' }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}

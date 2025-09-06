@@ -25,6 +25,7 @@ RUN apt-get update && \
         libc6-dev \
         make \
         postgresql \
+        wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -70,3 +71,26 @@ RUN pip3 --no-cache-dir install \
 
 RUN git clone -b v3.5.1 https://github.com/NVIDIA/cutlass.git /opt/cutlass
 ENV CUTLASS_PATH=/opt/cutlass
+
+# Build argument to optionally include pre-downloaded weights
+# Options:
+#   - false (default): No weights included, download at runtime
+#   - true: Download and include weights during build (adds ~1.4GB)
+ARG INCLUDE_WEIGHTS=false
+
+# Download and install model weights if INCLUDE_WEIGHTS is true
+# This downloads from ByteDance's servers and installs to the expected location
+RUN if [ "$INCLUDE_WEIGHTS" = "true" ]; then \
+        echo "Downloading Protenix v0.5.0 weights (1.4GB)..." && \
+        mkdir -p /root/.protenix/weights/protenix_base_default_v0.5.0/ && \
+        wget -q --show-progress --progress=bar:force \
+            -O /root/.protenix/weights/protenix_base_default_v0.5.0/model.pt \
+            https://af3-dev.tos-cn-beijing.volces.com/release_model/model_v0.5.0.pt && \
+        echo "Weights installed successfully" && \
+        ls -lh /root/.protenix/weights/protenix_base_default_v0.5.0/; \
+    fi
+
+# Set environment variable to indicate weights are pre-installed
+ARG WEIGHTS_LABEL=without-weights
+ENV PROTENIX_WEIGHTS_INCLUDED=${WEIGHTS_LABEL}
+LABEL org.opencontainers.image.weights="${WEIGHTS_LABEL}"
