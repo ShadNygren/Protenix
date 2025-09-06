@@ -8,7 +8,7 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
 # FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Shanghai \
+    TZ=UTC \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

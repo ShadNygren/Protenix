@@ -41,7 +41,7 @@ Docker images are automatically built and pushed to GitHub Container Registry (g
 
 Public images will be available at:
 ```bash
-docker pull ghcr.io/shadnygren/protenix:base
+docker pull ghcr.io/shadnygren/protenix:runtime
 docker pull ghcr.io/shadnygren/protenix:testing
 docker pull ghcr.io/shadnygren/protenix:release
 ```
@@ -49,7 +49,7 @@ docker pull ghcr.io/shadnygren/protenix:release
 ### Branch Strategy
 
 - `develop` → Active development (no automatic Docker builds)
-- `base` → Stable base for testing (triggers Docker build)
+- `docker-pytorch-runtime` → Stable runtime image (triggers Docker build)
 - `testing` → Testing candidate (triggers Docker build)
 - `release` → Production ready (triggers Docker build)
 
