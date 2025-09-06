@@ -8,7 +8,7 @@ graph TD
     M -->|features ready| MERGE[merged-updates - integration]
     
     MERGE -->|development tools needed| DEV[develop - 6.8GB devel]
-    MERGE -->|main pipeline| BASE[base - 3.3GB runtime]
+    MERGE -->|main pipeline| BASE[docker-pytorch-runtime - 3.3GB runtime]
     
     BASE -->|QA validation| TEST[testing]
     TEST -->|production ready| REL[release]
@@ -39,12 +39,12 @@ test-branch → merged-updates
 
 ### Release Pipeline (Primary)
 ```
-merged-updates → base → testing → release
+merged-updates → docker-pytorch-runtime → testing → release
 ```
 
 ### Development Pipeline (Secondary)
 ```
-merged-updates → develop (sibling to base)
+merged-updates → develop (sibling to docker-pytorch-runtime)
 ```
 
 ## Quick Reference Commands
@@ -92,10 +92,10 @@ git push origin shadnygren/fix-issue-123
 
 ### 4. Release Promotion
 ```bash
-# Promote to base (runtime image)
-git checkout base
-git merged-updates merged-updates
-git push origin base
+# Promote to docker-pytorch-runtime (runtime image)
+git checkout docker-pytorch-runtime
+git merge merged-updates
+git push origin docker-pytorch-runtime
 # Wait for Docker build
 
 # Promote to testing
@@ -132,7 +132,7 @@ git push origin develop
 - **Run tests** before merged-updates
 - **No force push**
 
-### `base`, `testing`, `release`
+### `docker-pytorch-runtime`, `testing`, `release`
 - **Protected branches**
 - **Require successful builds**
 - **Require passing tests**
@@ -143,9 +143,9 @@ git push origin develop
 | Branch | Docker Base | Size | Image Tag |
 |--------|------------|------|-----------|
 | develop | pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel | 6.8GB | ghcr.io/shadnygren/protenix:develop |
-| base | pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime | 3.3GB | ghcr.io/shadnygren/protenix:base |
-| testing | (inherits from base) | 3.3GB | ghcr.io/shadnygren/protenix:testing |
-| release | (inherits from base) | 3.3GB | ghcr.io/shadnygren/protenix:release |
+| docker-pytorch-runtime | pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime | 3.3GB | ghcr.io/shadnygren/protenix:runtime |
+| testing | (inherits from docker-pytorch-runtime) | 3.3GB | ghcr.io/shadnygren/protenix:testing |
+| release | (inherits from docker-pytorch-runtime) | 3.3GB | ghcr.io/shadnygren/protenix:release |
 
 ## Feature Branch Naming
 
@@ -174,7 +174,7 @@ git push origin develop
 - [ ] Documentation updated if needed
 - [ ] Follows coding standards
 
-### Before Merging to `base`
+### Before Merging to `docker-pytorch-runtime`
 - [ ] All tests pass in merged-updates branch
 - [ ] Docker builds successfully
 - [ ] No upstream conflicts

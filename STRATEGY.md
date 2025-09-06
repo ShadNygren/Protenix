@@ -27,7 +27,7 @@ upstream/main (ByteDance)
     merged-updates (integration point for all features)
     ├→ develop (6.8GB devel image, active development)
     ↓
-    base (3.3GB runtime image, stable features)
+    docker-pytorch-runtime (3.3GB runtime image, stable features)
     ↓
     testing (QA and integration testing)
     ↓
@@ -47,16 +47,16 @@ upstream/main (ByteDance)
 - **Updates**: Merge completed features and fixes
 - **Testing**: Verify all changes work with latest upstream
 - **Docker**: No automatic builds
-- **Children**: Both `develop` (sibling) and `base` (main pipeline)
+- **Children**: Both `develop` (sibling) and `docker-pytorch-runtime` (main pipeline)
 
 #### `develop`
 - **Purpose**: Active development with full tooling
 - **Docker**: Uses `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel` (6.8GB)
 - **Features**: CUDA development tools, compilers, debuggers
 - **Use**: When building custom kernels or extensive debugging
-- **Note**: Sibling branch to `base`, not in main release pipeline
+- **Note**: Sibling branch to `docker-pytorch-runtime`, not in main release pipeline
 
-#### `base`
+#### `docker-pytorch-runtime`
 - **Purpose**: Stable features with runtime image
 - **Docker**: Uses `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime` (3.3GB)
 - **Triggers**: GitHub Actions Docker build → ghcr.io
@@ -98,7 +98,7 @@ upstream/main (ByteDance)
 
 5. **Propagate through pipeline**:
    ```bash
-   Main pipeline: merged-updates → base → testing → release
+   Main pipeline: merged-updates → docker-pytorch-runtime → testing → release
    Dev pipeline:  merged-updates → develop (for development tools)
    ```
 
@@ -126,7 +126,7 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 # CUDA toolkit, compilers, debuggers
 ```
 
-#### Runtime Image (`base` branch)
+#### Runtime Image (`docker-pytorch-runtime` branch)
 ```dockerfile
 FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime  
 # 3.3GB optimized runtime image
@@ -153,9 +153,9 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
    ```
 
 3. **Promotion pipeline**:
-   - `merged-updates` → `base`: After integration tests pass (main pipeline)
+   - `merged-updates` → `docker-pytorch-runtime`: After integration tests pass (main pipeline)
    - `merged-updates` → `develop`: For features needing development tools (sibling)
-   - `base` → `testing`: After Docker build succeeds
+   - `docker-pytorch-runtime` → `testing`: After Docker build succeeds
    - `testing` → `release`: After full QA cycle
 
 ### 2. Enterprise Focus
