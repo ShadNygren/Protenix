@@ -1,7 +1,11 @@
-FROM vemlp-cn-beijing.cr.volces.com/preset-images/pytorch:2.7.1-cu12.6.3-py3.11-ubuntu22.04
+# Original ByteDance base image (Chinese registry - unknown contents)
+# FROM vemlp-cn-beijing.cr.volces.com/preset-images/pytorch:2.7.1-cu12.6.3-py3.11-ubuntu22.04
+
+# Official PyTorch development image (includes build tools, compilers, CUDA toolkit)
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Shanghai \
+    TZ=UTC \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -15,8 +19,9 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# PyTorch is pre-installed in the official base image
+# Verify versions and install torchvision/torchaudio if needed
 RUN pip3 install --no-cache-dir \
-    torch==2.7.1 \
     torchvision==0.22.1 \
     torchaudio==2.7.1
 
@@ -43,7 +48,7 @@ RUN pip3 --no-cache-dir install \
     fair-esm==2.0.0 \
     scikit-learn==1.7.1 \
     scikit-learn-extra==0.3.0 \
-    deepspeed==0.17.4 \
+    deepspeed==0.17.5 \
     triton==3.3.1 \
     optree==0.17.0 \
     protobuf==6.31.1 \
@@ -51,7 +56,8 @@ RUN pip3 --no-cache-dir install \
     ipdb==0.13.13 \
     wandb==0.21.1 \
     posix_ipc==1.3.0 \
-    numpy==1.26.4
+    numpy==1.26.4 \
+    pydantic>=2.0.0
 
 RUN git clone -b v3.5.1 https://github.com/NVIDIA/cutlass.git /opt/cutlass
 ENV CUTLASS_PATH=/opt/cutlass
