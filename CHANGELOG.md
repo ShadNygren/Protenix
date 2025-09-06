@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables Protenix to run on consumer hardware without code changes
   - Modified `protenix/model/tri_attention/__init__.py` to provide transparent fallback
 
+### Changed
+- Docker base image switched from Chinese registry to official PyTorch images
+  - Security: Using auditable, official PyTorch base images
+  - Accessibility: Available globally via Docker Hub
+  - Added GitHub Actions workflow for automated Docker builds to ghcr.io
+  - Created DOCKER.md documentation for Docker configuration
+
 ### Contributors
 - Shad Nygren, Virtual Hipster Corporation (@ShadNygren)
 
