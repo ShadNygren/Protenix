@@ -15,7 +15,7 @@ cat > .git/hooks/pre-commit << 'EOF'
 # List of protected files that should NEVER go upstream
 PROTECTED_FILES=(
     "ARCHITECTURE.md"
-    "BRANCH-FLOW.md"
+    "BRANCHES.md"
     "CLAUDE.md"
     "DESIGN.md"
     "DOCKER.md"
@@ -63,7 +63,7 @@ cat > .git/hooks/pre-push << 'EOF'
 
 PROTECTED_FILES=(
     "ARCHITECTURE.md"
-    "BRANCH-FLOW.md"
+    "BRANCHES.md"
     "CLAUDE.md"
     "DESIGN.md"
     "DOCKER.md"
@@ -110,7 +110,7 @@ echo "✅ Internal documentation protection installed!"
 echo ""
 echo "Protected files:"
 echo "  - ARCHITECTURE.md"
-echo "  - BRANCH-FLOW.md"
+echo "  - BRANCHES.md"
 echo "  - CLAUDE.md"
 echo "  - DESIGN.md"
 echo "  - DOCKER.md"

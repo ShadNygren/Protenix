@@ -1,6 +1,6 @@
 # Internal documentation - NEVER submit to upstream
 ARCHITECTURE.md
-BRANCH-FLOW.md
+BRANCHES.md
 CLAUDE.md
 DESIGN.md
 DOCKER.md
