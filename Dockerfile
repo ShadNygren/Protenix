@@ -1,11 +1,16 @@
-# Original ByteDance base image (Chinese registry - unknown contents)
-# FROM vemlp-cn-beijing.cr.volces.com/preset-images/pytorch:2.7.1-cu12.6.3-py3.11-ubuntu22.04
+# Build argument to select base image variant
+# Options:
+#   - runtime (default): 3.3GB base, for production deployments
+#   - devel: 6.8GB base, includes CUDA toolkit, compilers, debuggers for development
+# Usage: docker build --build-arg BASE_IMAGE_VARIANT=devel .
+ARG BASE_IMAGE_VARIANT=runtime
 
-# Official PyTorch base image (runtime - smaller, for deployment)
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+# Select the appropriate base image based on build argument
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-${BASE_IMAGE_VARIANT} AS base
 
-# Official PyTorch development image (includes build tools, for development)
-# FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
+# Label the image with the variant used
+LABEL org.opencontainers.image.description="Protenix with PyTorch ${BASE_IMAGE_VARIANT} base image"
+LABEL org.opencontainers.image.variant="${BASE_IMAGE_VARIANT}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
