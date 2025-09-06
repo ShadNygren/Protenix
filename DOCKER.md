@@ -49,6 +49,7 @@ docker pull ghcr.io/shadnygren/protenix:release
 
 ### Branch Strategy
 
+- `merged-updates` → Integration branch (no automatic Docker builds)
 - `docker-pytorch-devel` → Development with build tools (6.8GB image, triggers Docker build)
 - `docker-pytorch-runtime` → Stable runtime image (3.3GB image, triggers Docker build)
 - `testing` → Testing candidate (triggers Docker build)

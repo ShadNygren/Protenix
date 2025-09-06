@@ -7,14 +7,12 @@ on:
       - docker-pytorch-devel
       - testing
       - release
-      - shadnygren/docker-pytorch-base  # Remove this after testing
     tags:
       - 'v*'
   pull_request:
     branches:
       - main
       - docker-pytorch-runtime
-      - docker-pytorch-devel
   workflow_dispatch:  # Allow manual trigger
 
 env:
@@ -41,6 +39,15 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Determine base image variant
+        id: variant
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/docker-pytorch-devel" ]]; then
+            echo "BASE_IMAGE_VARIANT=devel" >> $GITHUB_OUTPUT
+          else
+            echo "BASE_IMAGE_VARIANT=runtime" >> $GITHUB_OUTPUT
+          fi
       
       - name: Extract metadata
         id: meta
@@ -70,6 +77,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
+            BASE_IMAGE_VARIANT=${{ steps.variant.outputs.BASE_IMAGE_VARIANT }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}
