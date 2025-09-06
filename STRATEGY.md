@@ -25,7 +25,7 @@ upstream/main (ByteDance)
     main (our tracking branch)
     ↓
     merged-updates (integration point for all features)
-    ├→ develop (6.8GB devel image, active development)
+    ├→ docker-pytorch-devel (6.8GB devel image, active development)
     ↓
     docker-pytorch-runtime (3.3GB runtime image, stable features)
     ↓
@@ -47,9 +47,9 @@ upstream/main (ByteDance)
 - **Updates**: Merge completed features and fixes
 - **Testing**: Verify all changes work with latest upstream
 - **Docker**: No automatic builds
-- **Children**: Both `develop` (sibling) and `docker-pytorch-runtime` (main pipeline)
+- **Children**: Both `docker-pytorch-devel` (sibling) and `docker-pytorch-runtime` (main pipeline)
 
-#### `develop`
+#### `docker-pytorch-devel`
 - **Purpose**: Active development with full tooling
 - **Docker**: Uses `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel` (6.8GB)
 - **Features**: CUDA development tools, compilers, debuggers
@@ -99,7 +99,7 @@ upstream/main (ByteDance)
 5. **Propagate through pipeline**:
    ```bash
    Main pipeline: merged-updates → docker-pytorch-runtime → testing → release
-   Dev pipeline:  merged-updates → develop (for development tools)
+   Dev pipeline:  merged-updates → docker-pytorch-devel (for development tools)
    ```
 
 ### Pull Request Strategy
@@ -119,7 +119,7 @@ upstream/main (ByteDance)
 
 ### Docker Image Strategy
 
-#### Development Image (`develop` branch)
+#### Development Image (`docker-pytorch-devel` branch)
 ```dockerfile
 FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 # 6.8GB image with full development tools
@@ -154,7 +154,7 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
 
 3. **Promotion pipeline**:
    - `merged-updates` → `docker-pytorch-runtime`: After integration tests pass (main pipeline)
-   - `merged-updates` → `develop`: For features needing development tools (sibling)
+   - `merged-updates` → `docker-pytorch-devel`: For features needing development tools (sibling)
    - `docker-pytorch-runtime` → `testing`: After Docker build succeeds
    - `testing` → `release`: After full QA cycle
 
