@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - docker-pytorch-runtime
+      - docker-pytorch-devel
       - testing
       - release
-      - shadnygren/docker-pytorch-base  # Remove this after testing
     tags:
       - 'v*'
   pull_request:
@@ -52,6 +52,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=runtime,enable=${{ github.ref == 'refs/heads/docker-pytorch-runtime' }}
+            type=raw,value=devel,enable=${{ github.ref == 'refs/heads/docker-pytorch-devel' }}
             type=raw,value=testing,enable=${{ github.ref == 'refs/heads/testing' }}
             type=raw,value=release,enable=${{ github.ref == 'refs/heads/release' }}
             type=sha,prefix={{branch}}-
