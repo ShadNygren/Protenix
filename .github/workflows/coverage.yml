@@ -40,9 +40,16 @@ jobs:
           # Combine coverage reports from both test runners
           echo "Combining coverage reports..."
           coverage combine || true
-          coverage xml -o coverage-combined.xml
-          coverage html -d htmlcov
-          coverage report
+          
+          # Known issue: PyTorch JIT compilation creates temporary files that coverage.py cannot find
+          # Error: "No source for code: '/tmp/tmpXXXXXXXX/_remote_module_non_scriptable.py'"
+          # This is a known issue between coverage.py and PyTorch's JIT compiler
+          # Adding "|| true" allows the workflow to continue despite this error
+          # The coverage data for actual source files is still collected correctly
+          # TODO: Remove "|| true" once this issue is fixed upstream
+          coverage xml -o coverage-combined.xml || true
+          coverage html -d htmlcov || true
+          coverage report || true
 
       - name: Upload coverage to Codecov (optional)
         uses: codecov/codecov-action@v5
