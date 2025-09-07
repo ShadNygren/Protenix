@@ -1,5 +1,24 @@
 # Protenix: Protein + X (Enterprise-Ready Fork)
 
+<div align="center">
+
+[![Docker Build Status](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml/badge.svg?branch=docker-pytorch)](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml)
+[![Security Scan](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml/badge.svg)](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/ShadNygren/Protenix/branch/docker-pytorch/graph/badge.svg)](https://codecov.io/gh/ShadNygren/Protenix)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Docker Pulls](https://img.shields.io/docker/pulls/shadnygren/protenix?label=Docker%20Pulls)](https://github.com/ShadNygren/Protenix/pkgs/container/protenix)
+
+</div>
+
+<div align="center">
+
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ShadNygren/Protenix/badge)](https://scorecard.dev/viewer/?uri=github.com/ShadNygren/Protenix)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
+[![SBOM](https://img.shields.io/badge/SBOM-Available-brightgreen)](https://github.com/ShadNygren/Protenix/actions/workflows/sbom.yml)
+[![Trivy Scan](https://img.shields.io/badge/Trivy-Scanned-success)](https://github.com/ShadNygren/Protenix/security)
+
+</div>
+
 ## 🚀 Enterprise Improvements in This Fork
 
 This fork enhances the original ByteDance Protenix with enterprise-grade improvements focused on **security**, **reliability**, and **ease of deployment** for scientists, researchers, and biotech firms worldwide.
@@ -27,9 +46,24 @@ This fork enhances the original ByteDance Protenix with enterprise-grade improve
 - **7-Day Cache Strategy**: Reduces server load and speeds up CI/CD
 
 #### 🔒 **Security & Compliance**
-- **Auditable Supply Chain**: All base images from trusted sources
-- **Version Control**: Proper semantic versioning for weights and images
-- **Enterprise Ready**: Suitable for regulated environments
+- **Comprehensive Security Scanning**: 
+  - Trivy vulnerability scanning for code and containers
+  - OWASP dependency checking
+  - Secret detection with TruffleHog
+  - License compliance verification
+- **Software Bill of Materials (SBOM)**: 
+  - Auto-generated for all Docker images
+  - CycloneDX and SPDX formats
+  - Attestation support for supply chain security
+- **Auditable Supply Chain**: 
+  - All base images from trusted sources (PyTorch, Alpine)
+  - OpenSSF Scorecard compliance
+  - Working towards SLSA Level 3
+- **Enterprise Compliance Ready**:
+  - SOC 2 Type II controls
+  - HIPAA considerations for healthcare
+  - FDA 21 CFR Part 11 for pharmaceutical use
+- **Security Documentation**: [Full Security Policy](./SECURITY.md)
 
 ### Quick Start with Docker
 ```bash

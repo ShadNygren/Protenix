@@ -1,0 +1,17 @@
+# Trivy Ignore File
+# Format: CVE-ID or Package Name
+
+# Known false positives or accepted risks
+# Add CVEs here that are not applicable to our use case
+
+# Example (uncomment and modify as needed):
+# CVE-2021-12345  # Not exploitable in our containerized environment
+# CVE-2022-67890  # Fixed in our fork, awaiting upstream patch
+
+# Ignore test dependencies
+**/tests/**
+**/test_*.py
+
+# Ignore documentation
+**/docs/**
+*.md
