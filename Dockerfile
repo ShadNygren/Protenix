@@ -158,10 +158,12 @@ LABEL org.opencontainers.image.weights="${INCLUDE_WEIGHTS}"
 LABEL org.opencontainers.image.weights.version="${WEIGHTS_VERSION}"
 LABEL org.opencontainers.image.weights.model="${WEIGHTS_MODEL_NAME}"
 
-# Copy Protenix source code
+# Copy Protenix source code (excluding any accidental files)
 COPY protenix/ /workspace/protenix/
 COPY tests/ /workspace/tests/
 COPY requirements.txt /workspace/
+# Clean up any accidental files that might have been created
+RUN rm -f /workspace/'=2.0.0' /workspace/'>=2.0.0' 2>/dev/null || true
 
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
