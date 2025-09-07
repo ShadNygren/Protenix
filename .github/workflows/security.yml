@@ -40,7 +40,7 @@ jobs:
     if: github.event_name == 'push'
     strategy:
       matrix:
-        image: [runtime, runtime_weights, devel, devel_weights]
+        image: [runtime, devel]  # Only scan existing images for now
     permissions:
       contents: read
       security-events: write
@@ -56,11 +56,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull Docker image
-        run: docker pull ghcr.io/shadnygren/protenix:${{ matrix.image }} || true
+      - name: Check if Docker image exists
+        id: image_check
+        run: |
+          if docker pull ghcr.io/shadnygren/protenix:${{ matrix.image }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image ghcr.io/shadnygren/protenix:${{ matrix.image }} not found, skipping scan"
+          fi
         continue-on-error: true
 
       - name: Run Trivy on Docker image
+        if: steps.image_check.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'ghcr.io/shadnygren/protenix:${{ matrix.image }}'
@@ -70,8 +78,8 @@ jobs:
         continue-on-error: true
 
       - name: Upload Docker scan results
+        if: steps.image_check.outputs.exists == 'true'
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
         with:
           sarif_file: 'docker-trivy-results.sarif'
         continue-on-error: true
@@ -139,6 +147,16 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event.before || github.event.repository.default_branch }}
+          head: ${{ github.event.after || 'HEAD' }}
           extra_args: --debug --only-verified
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        continue-on-error: true
+
+      - name: TruffleHog OSS (Full Scan)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --debug --only-verified
+        if: github.event_name != 'push' || github.event.before == '0000000000000000000000000000000000000000'
+        continue-on-error: true

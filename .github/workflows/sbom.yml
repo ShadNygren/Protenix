@@ -26,8 +26,8 @@ jobs:
       - name: Generate SBOM for Python dependencies
         run: |
           pip install -r requirements.txt
-          cyclonedx-py -r -i requirements.txt -o sbom-python.json --format json
-          cyclonedx-py -r -i requirements.txt -o sbom-python.xml --format xml
+          cyclonedx-py requirements -i requirements.txt -o sbom-python.json --format json
+          cyclonedx-py requirements -i requirements.txt -o sbom-python.xml --format xml
 
       - name: Upload Python SBOM
         uses: actions/upload-artifact@v4
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: [runtime, runtime_weights, devel, devel_weights]
+        image: [runtime, devel]  # Only generate SBOM for existing images
     permissions:
       contents: read
       packages: read
@@ -54,7 +54,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check if Docker image exists
+        id: image_check
+        run: |
+          if docker pull ghcr.io/shadnygren/protenix:${{ matrix.image }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image ghcr.io/shadnygren/protenix:${{ matrix.image }} not found, skipping SBOM generation"
+          fi
+        continue-on-error: true
+
       - name: Generate SBOM using Syft
+        if: steps.image_check.outputs.exists == 'true'
         uses: anchore/sbom-action@v0
         with:
           image: ghcr.io/shadnygren/protenix:${{ matrix.image }}
@@ -63,8 +75,8 @@ jobs:
         continue-on-error: true
 
       - name: Generate SBOM with Docker Scout
+        if: steps.image_check.outputs.exists == 'true'
         run: |
-          docker pull ghcr.io/shadnygren/protenix:${{ matrix.image }} || true
           docker sbom ghcr.io/shadnygren/protenix:${{ matrix.image }} > sbom-scout-${{ matrix.image }}.json || true
         continue-on-error: true
 
