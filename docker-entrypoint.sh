@@ -25,8 +25,25 @@ echo "==================================="
 # Set working directory
 cd /workspace 2>/dev/null || cd /root
 
-# If no command is provided, start an interactive bash shell
-if [ $# -eq 0 ]; then
+# Check if we're running in RunPod environment
+if [ -n "$RUNPOD_POD_ID" ] || [ -n "$RUNPOD_DC_ID" ]; then
+    echo "Detected RunPod environment"
+    echo "Starting SSH daemon for RunPod access..."
+    
+    # Start SSH service if available
+    if command -v sshd &> /dev/null; then
+        service ssh start 2>/dev/null || /usr/sbin/sshd || true
+    fi
+    
+    echo "Container ready for connections"
+    echo "To run Protenix inference, use the appropriate Python scripts in /workspace"
+    
+    # Keep container running with a sleep loop
+    while true; do
+        sleep 3600
+    done
+elif [ $# -eq 0 ]; then
+    # No command provided and not in RunPod - start interactive shell
     echo "Starting interactive shell..."
     echo "To run Protenix inference, use the appropriate Python scripts."
     echo ""

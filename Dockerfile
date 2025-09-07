@@ -26,8 +26,16 @@ RUN apt-get update && \
         make \
         postgresql \
         wget \
+        openssh-server \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH for RunPod (they inject keys at runtime)
+RUN mkdir -p /var/run/sshd && \
+    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
+    echo "AuthorizedKeysFile /root/.ssh/authorized_keys" >> /etc/ssh/sshd_config
 
 # PyTorch is pre-installed in the official base image
 # Verify versions and install torchvision/torchaudio if needed
