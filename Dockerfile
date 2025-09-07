@@ -150,6 +150,22 @@ LABEL org.opencontainers.image.weights="${INCLUDE_WEIGHTS}"
 LABEL org.opencontainers.image.weights.version="${WEIGHTS_VERSION}"
 LABEL org.opencontainers.image.weights.model="${WEIGHTS_MODEL_NAME}"
 
+# Copy Protenix source code
+COPY protenix/ /workspace/protenix/
+COPY tests/ /workspace/tests/
+COPY requirements.txt /workspace/
+
+# Copy entrypoint script and set permissions
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Set working directory
+WORKDIR /workspace
+
+# Set entrypoint for RunPod and other cloud environments
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/bin/bash"]
+
 # Note on caching:
 # - GitHub Actions caches layers for 7 days of inactivity
 # - Cache survives weekends and even 3-day weekends
