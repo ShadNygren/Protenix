@@ -34,11 +34,13 @@ RUN apt-get update && \
         kalign \
         wget \
         openssh-server \
+        openssh-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure SSH for RunPod (they inject keys at runtime)
-RUN mkdir -p /var/run/sshd && \
+# Configure SSH for RunPod (keys are injected at runtime by RunPod or docker-entrypoint.sh)
+RUN mkdir -p /var/run/sshd /root/.ssh && \
+    chmod 700 /root/.ssh && \
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
     echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
@@ -116,7 +118,14 @@ RUN if [ "$INCLUDE_WEIGHTS" = "true" ]; then \
         echo "No weights included - will download at runtime"; \
     fi
 
+# Create checkpoint symlink so inference finds weights at default path
+RUN mkdir -p /root/checkpoint && \
+    if [ -d "/root/.protenix/weights/${WEIGHTS_MODEL_NAME}" ]; then \
+        ln -sf /root/.protenix/weights/${WEIGHTS_MODEL_NAME} /root/checkpoint/${WEIGHTS_MODEL_NAME}; \
+    fi
+
 # Set environment variables for weight tracking
+ENV PROTENIX_ROOT_DIR=/root
 ENV PROTENIX_WEIGHTS_INCLUDED=${INCLUDE_WEIGHTS}
 ENV PROTENIX_WEIGHTS_VERSION=${WEIGHTS_VERSION}
 ENV PROTENIX_WEIGHTS_MODEL=${WEIGHTS_MODEL_NAME}
@@ -134,9 +143,13 @@ COPY tests/ /workspace/tests/
 COPY scripts/ /workspace/scripts/
 COPY requirements.txt /workspace/
 COPY setup.py /workspace/
+COPY README.md /workspace/
 
 # Clean up any accidental files that might have been created
 RUN rm -f /workspace/'=2.0.0' /workspace/'>=2.0.0' 2>/dev/null || true
+
+# Install Protenix as editable package so it's ready to use on launch
+RUN cd /workspace && pip install --no-cache-dir -e .
 
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
