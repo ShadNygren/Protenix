@@ -172,6 +172,17 @@ RUN if [ "${BASE_IMAGE_VARIANT}" = "devel" ] && command -v nvcc >/dev/null 2>&1;
         echo "Skipping CUDA kernel pre-compilation (runtime image, no nvcc)"; \
     fi
 
+# Pre-download PDB Chemical Component Dictionary (components.cif, ~469MB)
+# This avoids a ~2min download from a Chinese server on first inference.
+# SHA256 verified to ensure integrity.
+ENV CCD_COMPONENTS_SHA256=bb31ae5cf6c8bc669924313077cb4231ee5ffefd3a20118cd14f3ec89f8bb6a5
+RUN mkdir -p /root/common && \
+    wget --no-check-certificate -q --show-progress --progress=bar:force \
+        -O /root/common/components.cif \
+        https://protenix.tos-cn-beijing.volces.com/common/components.cif && \
+    echo "${CCD_COMPONENTS_SHA256}  /root/common/components.cif" | sha256sum -c - && \
+    ls -lh /root/common/components.cif
+
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
