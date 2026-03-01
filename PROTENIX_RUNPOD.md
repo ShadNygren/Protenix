@@ -218,13 +218,42 @@ Each seed generates 5 samples, so 3 seeds = 15 total structures.
 
 ## Performance
 
-Tested on NVIDIA A40 (46GB VRAM):
+### Benchmarked on NVIDIA A40 (46GB VRAM)
 
-| Protein Size | Tokens | Time (no MSA) | Notes |
-|-------------|--------|---------------|-------|
-| ~108 residues (2 chains) | 108 | ~23s | UHRF1 PHD + mSTELLA Swap1 |
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Protein** | UHRF1 PHD + mSTELLA Swap1 | 69 + 39 = 108 residues, 905 atoms |
+| **Forward time** | 13.35s | 5 samples, 10 recycles each |
+| **Total time (cold)** | ~124s | Includes model load + CUDA kernel compile |
+| **Total time (warm)** | ~20s | Model already loaded in memory |
+| **VRAM peak** | 3,271 MB (7.1%) | 46,068 MB available |
+| **GPU utilization peak** | 57% | Average ~4.5% (idle during load) |
+| **GPU temp peak** | 38°C | Barely warmed up |
+| **GPU power peak** | 195W | Average ~51W |
+| **RAM peak** | ~58 GB | Container sees host RAM via cgroups |
 
-Model loading takes ~2 minutes on first run. Subsequent predictions in the same session reuse the loaded model.
+### GPU Sizing Guide
+
+Based on VRAM usage of ~3.3 GB for 108 residues (no MSA):
+
+| GPU | VRAM | Est. Max Residues | RunPod $/hr | Fit? |
+|-----|------|-------------------|-------------|------|
+| RTX 3060 | 12 GB | ~400 | Local | Yes |
+| RTX 4000 Ada | 20 GB | ~700 | $0.24 | Yes |
+| RTX A4000 | 16 GB | ~500 | $0.28 | Yes |
+| A40 | 46 GB | ~2000+ | $0.76 | Overkill for small proteins |
+| A100 | 80 GB | ~3000+ | $1.84 | Only for large complexes |
+
+**Note**: VRAM scales roughly quadratically with token count. These estimates are for no-MSA mode.
+
+### Performance Notes
+- Model loading takes ~2 minutes on first run (cold start)
+- CUDA kernel `fast_layer_norm_cuda_v2` compiles on first import (~2 min, devel image only)
+- Subsequent predictions in the same session reuse the loaded model (~20s per prediction)
+- Use `scripts/protenix_benchmark.py` to profile on different GPUs
+
+### Container vs Host Resources
+RunPod containers can see host CPU/RAM counts but are limited by cgroup settings. Use `cat /sys/fs/cgroup/memory.max` and `cat /sys/fs/cgroup/cpu.max` to see actual container limits. GPU VRAM is dedicated and accurate.
 
 ---
 

@@ -1,0 +1,21 @@
+[
+  {
+    "name": "test_uhrf1_phd_mstella_swap1",
+    "sequences": [
+      {
+        "proteinChain": {
+          "id": "A",
+          "sequence": "ICKYCDYEFLCDHCETLSQNWPQCTICQSIYEYECNRVCEEPLRVPCHFPDHMISTCPKCDKYIFLHDD",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "id": "B",
+          "sequence": "QSAFPKRRVRTLLSVLKDPIAKMRRLVRIEQRQKRLEGN",
+          "count": 1
+        }
+      }
+    ]
+  }
+]
