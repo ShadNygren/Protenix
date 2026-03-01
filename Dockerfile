@@ -15,11 +15,13 @@ LABEL org.opencontainers.image.description="Protenix with PyTorch ${BASE_IMAGE_V
 LABEL org.opencontainers.image.variant="${BASE_IMAGE_VARIANT}"
 
 # Set environment variables
+# PATH includes conda bin and CUDA so python3/nvcc/protenix work everywhere
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CUTLASS_PATH=/opt/cutlass
+    CUTLASS_PATH=/opt/cutlass \
+    PATH=/opt/conda/bin:/usr/local/cuda/bin:${PATH}
 
 # Install system dependencies
 RUN apt-get update && \
@@ -44,7 +46,10 @@ RUN mkdir -p /var/run/sshd /root/.ssh && \
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
     echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
-    echo "AuthorizedKeysFile /root/.ssh/authorized_keys" >> /etc/ssh/sshd_config
+    echo "AuthorizedKeysFile /root/.ssh/authorized_keys" >> /etc/ssh/sshd_config && \
+    echo 'export PATH=/opt/conda/bin:/usr/local/cuda/bin:$PATH' >> /root/.bashrc && \
+    echo 'export PROTENIX_ROOT_DIR=/root' >> /root/.bashrc && \
+    echo 'cd /workspace' >> /root/.bashrc
 
 # Set working directory
 WORKDIR /app
