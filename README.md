@@ -66,7 +66,19 @@ This fork enhances the original ByteDance Protenix with enterprise-grade improve
 - **Security Documentation**: [Full Security Policy](./SECURITY.md)
 
 ### Quick Start with Docker
+
+#### GPU Requirements
+- **NVIDIA Driver**: Version 560.28.03 or newer required for CUDA 12.6 compatibility
+- **Supported GPUs**: RTX 3090, RTX 4090, A40, A100, H100, H200, L4, L40 (with compatible drivers)
+- **Cloud Provider Notes**: 
+  - Some cloud providers may have older drivers. Check with `nvidia-smi` before deploying
+  - RunPod RTX 4090 instances may have incompatible drivers - use A40/A100/H100 instead
+  - AWS/GCP/Azure typically maintain up-to-date drivers on their GPU instances
+
 ```bash
+# Check your NVIDIA driver version first
+nvidia-smi  # Should show Driver Version: 560.28.03 or higher
+
 # For immediate use with pre-installed weights (no download needed)
 docker pull ghcr.io/shadnygren/protenix:runtime_weights
 docker run --gpus all -it ghcr.io/shadnygren/protenix:runtime_weights

@@ -1,45 +1,83 @@
 ### Run with Docker
 
-1. Install Docker (with GPU Support)
+## GPU Requirements
 
-    Ensure that Docker is installed and configured with GPU support. Follow these steps:
-    *   Install [Docker](https://www.docker.com/) if not already installed.
-    *   Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) to enable GPU support.
-    *   Verify the setup with (using a version close to our environment):
+⚠️ **Important**: Our Docker images require **NVIDIA Driver 560.28.03 or newer** for CUDA 12.6 compatibility.
+
+**Check your driver version:**
+```bash
+nvidia-smi  # Should show Driver Version: 560.28.03 or higher
+```
+
+**Supported GPUs** (with compatible drivers):
+- Consumer: RTX 3090, RTX 4090
+- Data Center: A40, A100, H100, H200, L4, L40
+
+**Cloud Provider Notes:**
+- ✅ AWS/GCP/Azure: Generally have up-to-date drivers
+- ⚠️ RunPod RTX 4090: May have older drivers - use A40/A100/H100 instances instead
+- ⚠️ Smaller cloud providers: Verify driver version before deployment
+
+## Installation Steps
+
+1. **Install Docker with GPU Support**
+
+    Install required components:
+    * Install [Docker](https://www.docker.com/) if not already installed
+    * Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+    * Verify GPU support:
         ```bash
-        docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu22.04 nvidia-smi
+        docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi
         ```
 
-2. Pull the Docker image
-    The image contains all necessary dependencies (PyTorch, HMMER, Kalign, CUTLASS, etc.), but does not include the Protenix source code by default.
+2. **Choose and Pull a Docker Image**
+
+    We provide four optimized variants:
+
+    | Variant | Size | Use Case |
+    |---------|------|----------|
+    | `runtime` | 3.3GB | Production deployment |
+    | `runtime_weights` | 4.7GB | Production with pre-installed weights |
+    | `devel` | 6.8GB | Development with CUDA toolkit |
+    | `devel_weights` | 8.2GB | Development with pre-installed weights |
+
     ```bash
-    docker pull ai4s-share-public-cn-beijing.cr.volces.com/release/protenix:1.0.0.4
+    # For production with pre-installed weights (recommended)
+    docker pull ghcr.io/shadnygren/protenix:runtime_weights
+
+    # For development
+    docker pull ghcr.io/shadnygren/protenix:devel_weights
     ```
 
-3. Clone this repository
+3. **Clone Repository** (optional for local development)
     ```bash
-    git clone https://github.com/bytedance/protenix.git 
-    cd ./protenix
+    git clone https://github.com/ShadNygren/Protenix.git
+    cd Protenix
     ```
 
-4. Run Docker with an interactive shell
-    Mount the current directory to `/app` inside the container. If you have external data or weights (e.g., in `/root/protenix`), consider mounting them as well.
+4. **Run Docker Container**
     ```bash
+    # Production use (with pre-installed weights)
+    docker run --gpus all -it ghcr.io/shadnygren/protenix:runtime_weights
+
+    # Development with local code mounting
     docker run --gpus all -it \
-        -v "$(pwd)":/app \
+        -v $(pwd):/workspace \
         -v /dev/shm:/dev/shm \
-        ai4s-share-public-cn-beijing.cr.volces.com/release/protenix:1.0.0.4 \
+        ghcr.io/shadnygren/protenix:devel_weights \
         /bin/bash
     ```
 
-5. Install Protenix and Verify
-    Once inside the container, install Protenix in editable mode and verify the installation:
-    ```bash
-    cd /app
-    pip install -e .
-    
-    # Verify the installation by checking the help message
-    protenix --help
-    ```
+After running these commands, you'll be inside the container's environment with Protenix ready to use.
 
-After completing these steps, you can proceed with inference or training. See [Inference Guide](infer_json_format.md) for more details.
+## Troubleshooting
+
+**CUDA Version Error:**
+```
+nvidia-container-cli: requirement error: unsatisfied condition: cuda>=12.6
+```
+**Solution**: Update your NVIDIA driver to 560.28.03 or newer, or use a cloud instance with compatible drivers.
+
+**Out of Memory:**
+- Ensure `/dev/shm` is mounted with sufficient space
+- Use `--shm-size=8g` flag if needed
