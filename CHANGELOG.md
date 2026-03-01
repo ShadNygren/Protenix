@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added explicit input JSON validation for non-empty top-level list (`runner/inference.py`).
   - Hardened model-name parsing to avoid crashes on unexpected naming (`runner/inference.py`, `runner/batch_inference.py`).
 
+### Changed
+- Docker base image switched from Chinese registry to official PyTorch images
+  - Security: Using auditable, official PyTorch base images
+  - Accessibility: Available globally via Docker Hub
+  - Added GitHub Actions workflow for automated Docker builds to ghcr.io
+  - Created DOCKER.md documentation for Docker configuration
+
 ### Contributors
 - Shad Nygren, Virtual Hipster Corporation (@ShadNygren)
 

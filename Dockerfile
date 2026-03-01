@@ -1,8 +1,15 @@
-FROM vemlp-cn-beijing.cr.volces.com/preset-images/pytorch:2.7.1-cu12.6.3-py3.11-ubuntu22.04
+# Original ByteDance base image (Chinese registry - unknown contents)
+# FROM vemlp-cn-beijing.cr.volces.com/preset-images/pytorch:2.7.1-cu12.6.3-py3.11-ubuntu22.04
+
+# Official PyTorch base image (runtime - smaller, for deployment)
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+
+# Official PyTorch development image (includes build tools, for development)
+# FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Shanghai \
+    TZ=UTC \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     CUTLASS_PATH=/opt/cutlass
