@@ -127,9 +127,10 @@ RUN if [ "$INCLUDE_WEIGHTS" = "true" ]; then \
     fi
 
 # Create checkpoint symlink so inference finds weights at default path
+# Protenix looks for /root/checkpoint/{model_name}.pt (a file, not a directory)
 RUN mkdir -p /root/checkpoint && \
-    if [ -d "/root/.protenix/weights/${WEIGHTS_MODEL_NAME}" ]; then \
-        ln -sf /root/.protenix/weights/${WEIGHTS_MODEL_NAME} /root/checkpoint/${WEIGHTS_MODEL_NAME}; \
+    if [ -f "/root/.protenix/weights/${WEIGHTS_MODEL_NAME}/model.pt" ]; then \
+        ln -sf /root/.protenix/weights/${WEIGHTS_MODEL_NAME}/model.pt /root/checkpoint/${WEIGHTS_MODEL_NAME}.pt; \
     fi
 
 # Set environment variables for weight tracking
