@@ -23,15 +23,17 @@ jobs:
       max-parallel: 2  # Limit parallel builds to avoid disk space issues
       matrix:
         include:
-          - variant: runtime
-            weights: false
-            suffix: ""
-          - variant: runtime
-            weights: true
-            suffix: "-with-weights"
-          - variant: devel
-            weights: false
-            suffix: "-devel"
+          # Only building devel-with-weights for now (the one we use on RunPod)
+          # Uncomment others when needed:
+          # - variant: runtime
+          #   weights: false
+          #   suffix: ""
+          # - variant: runtime
+          #   weights: true
+          #   suffix: "-with-weights"
+          # - variant: devel
+          #   weights: false
+          #   suffix: "-devel"
           - variant: devel
             weights: true
             suffix: "-devel-with-weights"

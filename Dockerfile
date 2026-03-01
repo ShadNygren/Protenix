@@ -159,6 +159,19 @@ RUN rm -f /workspace/'=2.0.0' /workspace/'>=2.0.0' 2>/dev/null || true
 # Install Protenix as editable package so it's ready to use on launch
 RUN cd /workspace && pip install --no-cache-dir -e .
 
+# Pre-compile CUDA kernel (fast_layer_norm_cuda_v2) to avoid ~10min JIT
+# compilation on first inference. Only works on devel images (need nvcc).
+# On runtime images, the compilation is skipped and will happen at runtime
+# if nvcc is somehow available, or fail gracefully.
+ARG BASE_IMAGE_VARIANT
+RUN if [ "${BASE_IMAGE_VARIANT}" = "devel" ] && command -v nvcc >/dev/null 2>&1; then \
+        echo "Pre-compiling CUDA kernels (devel image with nvcc)..." && \
+        cd /workspace && python3 -c "from protenix.model.layer_norm import FusedLayerNorm; print('CUDA kernel compiled successfully')" && \
+        ls -lh /workspace/protenix/model/layer_norm/fast_layer_norm_cuda_v2.so; \
+    else \
+        echo "Skipping CUDA kernel pre-compilation (runtime image, no nvcc)"; \
+    fi
+
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
