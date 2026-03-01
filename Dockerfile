@@ -172,16 +172,24 @@ RUN if [ "${BASE_IMAGE_VARIANT}" = "devel" ] && command -v nvcc >/dev/null 2>&1;
         echo "Skipping CUDA kernel pre-compilation (runtime image, no nvcc)"; \
     fi
 
-# Pre-download PDB Chemical Component Dictionary (components.cif, ~469MB)
-# This avoids a ~2min download from a Chinese server on first inference.
-# SHA256 verified to ensure integrity.
-ENV CCD_COMPONENTS_SHA256=bb31ae5cf6c8bc669924313077cb4231ee5ffefd3a20118cd14f3ec89f8bb6a5
+# Pre-download all Protenix data dependencies (~625MB total) to avoid
+# slow downloads from Chinese CDN on first inference. SHA256 verified.
 RUN mkdir -p /root/common && \
-    wget --no-check-certificate -q --show-progress --progress=bar:force \
-        -O /root/common/components.cif \
-        https://protenix.tos-cn-beijing.volces.com/common/components.cif && \
-    echo "${CCD_COMPONENTS_SHA256}  /root/common/components.cif" | sha256sum -c - && \
-    ls -lh /root/common/components.cif
+    CDN="https://protenix.tos-cn-beijing.volces.com/common" && \
+    echo "Downloading components.cif (469MB)..." && \
+    wget --no-check-certificate -q -O /root/common/components.cif ${CDN}/components.cif && \
+    echo "bb31ae5cf6c8bc669924313077cb4231ee5ffefd3a20118cd14f3ec89f8bb6a5  /root/common/components.cif" | sha256sum -c - && \
+    echo "Downloading components.cif.rdkit_mol.pkl (136MB)..." && \
+    wget --no-check-certificate -q -O /root/common/components.cif.rdkit_mol.pkl ${CDN}/components.cif.rdkit_mol.pkl && \
+    echo "d1cfb71f5993a3ebea7c47877022d7f597bbfbaf86e28a4770e957da6c50cd35  /root/common/components.cif.rdkit_mol.pkl" | sha256sum -c - && \
+    echo "Downloading clusters-by-entity-40.txt (21MB)..." && \
+    wget --no-check-certificate -q -O /root/common/clusters-by-entity-40.txt ${CDN}/clusters-by-entity-40.txt && \
+    echo "1ab4af905e75b382eda8dec59917dc3608bee0729e36b9e71baf860bbe86850c  /root/common/clusters-by-entity-40.txt" | sha256sum -c - && \
+    echo "Downloading obsolete_release_date.csv (132KB)..." && \
+    wget --no-check-certificate -q -O /root/common/obsolete_release_date.csv ${CDN}/obsolete_release_date.csv && \
+    echo "a4f3f63ac5d7eebd78b07995cc669b9eccd6f5d8813c9492c9df02868893cf33  /root/common/obsolete_release_date.csv" | sha256sum -c - && \
+    echo "All data dependencies downloaded and verified:" && \
+    ls -lh /root/common/
 
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
