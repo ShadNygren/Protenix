@@ -63,10 +63,13 @@ RUN git clone -b v3.5.1 https://github.com/NVIDIA/cutlass.git /opt/cutlass
 FROM alpine:latest AS weights-downloader
 
 # Version arguments for weights management
-# Change these to download different versions or from different sources
+# Default: protenix_base_20250630_v1.0.0 (practical model, 2025-06-30 data cutoff)
+# Override at build time for other models, e.g.:
+#   --build-arg WEIGHTS_MODEL_NAME=protenix_base_default_v1.0.0
+#   --build-arg WEIGHTS_URL=https://protenix.tos-cn-beijing.volces.com/checkpoint/protenix_base_default_v1.0.0.pt
 ARG WEIGHTS_VERSION=v1.0.0
-ARG WEIGHTS_URL=https://protenix.tos-cn-beijing.volces.com/checkpoint/protenix_base_default_v1.0.0.pt
-ARG WEIGHTS_MODEL_NAME=protenix_base_default_v1.0.0
+ARG WEIGHTS_URL=https://protenix.tos-cn-beijing.volces.com/checkpoint/protenix_base_20250630_v1.0.0.pt
+ARG WEIGHTS_MODEL_NAME=protenix_base_20250630_v1.0.0
 
 RUN apk add --no-cache wget ca-certificates
 WORKDIR /weights
@@ -94,7 +97,7 @@ FROM base AS final
 # Build arguments
 ARG INCLUDE_WEIGHTS=false
 ARG WEIGHTS_VERSION=v1.0.0
-ARG WEIGHTS_MODEL_NAME=protenix_base_default_v1.0.0
+ARG WEIGHTS_MODEL_NAME=protenix_base_20250630_v1.0.0
 
 # Create .protenix directory structure
 RUN mkdir -p /root/.protenix/weights/

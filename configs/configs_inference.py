@@ -20,7 +20,7 @@ from protenix.config.extend_types import ListValue, RequiredValue
 
 PROTENIX_ROOT_DIR = os.environ.get("PROTENIX_ROOT_DIR", str(Path.home()))
 inference_configs = {
-    "model_name": "protenix_base_default_v1.0.0",  # inference model selection
+    "model_name": "protenix_base_20250630_v1.0.0",  # practical model (2025-06-30 cutoff) for best accuracy
     "seeds": ListValue([101]),
     "dump_dir": "./output",
     "need_atom_confidence": False,
