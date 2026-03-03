@@ -235,7 +235,7 @@ def _attention(
     k: torch.Tensor,
     v: torch.Tensor,
     attn_bias: Optional[torch.Tensor] = None,
-    use_efficient_implementation: bool = False,
+    use_efficient_implementation: bool = True,
     inplace_safe: bool = False,
 ) -> torch.Tensor:
     """Attention.
@@ -516,7 +516,7 @@ def _local_attention(
     attn_bias: Optional[torch.Tensor] = None,
     trunked_attn_bias: Optional[torch.Tensor] = None,
     inf: float = 1e10,
-    use_efficient_implementation: bool = False,
+    use_efficient_implementation: bool = True,
     inplace_safe: bool = False,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
@@ -677,7 +677,7 @@ class Attention(nn.Module):
         gating: bool = True,
         q_linear_bias: bool = True,
         local_attention_method: str = "global_attention_with_bias",
-        use_efficient_implementation: bool = False,
+        use_efficient_implementation: bool = True,
         zero_init: bool = True,
     ) -> None:
         super(Attention, self).__init__()
