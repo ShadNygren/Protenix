@@ -235,7 +235,7 @@ def _attention(
     k: torch.Tensor,
     v: torch.Tensor,
     attn_bias: Optional[torch.Tensor] = None,
-    use_efficient_implementation: bool = True,
+    use_efficient_implementation: bool = False,
     inplace_safe: bool = False,
 ) -> torch.Tensor:
     """Attention.
@@ -256,7 +256,6 @@ def _attention(
     input_dtype = q.dtype
     q = q.to(dtype=torch.float32)
     k = k.to(dtype=torch.float32)
-    v = v.to(dtype=torch.float32)
     if attn_bias is not None:
         attn_bias = attn_bias.to(dtype=torch.float32)
 
@@ -268,7 +267,7 @@ def _attention(
             attn_mask=attn_bias,
             scale=1.0,
         )
-        return attn_output.to(dtype=input_dtype)
+        return attn_output
 
     with torch.amp.autocast("cuda", enabled=False):
         # [..., n_kv, d] -> [..., d, n_kv]
@@ -287,7 +286,7 @@ def _attention(
         attn_weights = F.softmax(attn_weights, dim=-1)
 
     # [..., n_q, n_kv], [..., n_kv, d] -> [..., n_q, d]
-    attn_output = (attn_weights @ v).to(dtype=input_dtype)
+    attn_output = attn_weights.to(dtype=input_dtype) @ v
 
     return attn_output
 
@@ -517,7 +516,7 @@ def _local_attention(
     attn_bias: Optional[torch.Tensor] = None,
     trunked_attn_bias: Optional[torch.Tensor] = None,
     inf: float = 1e10,
-    use_efficient_implementation: bool = True,
+    use_efficient_implementation: bool = False,
     inplace_safe: bool = False,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
@@ -678,7 +677,7 @@ class Attention(nn.Module):
         gating: bool = True,
         q_linear_bias: bool = True,
         local_attention_method: str = "global_attention_with_bias",
-        use_efficient_implementation: bool = True,
+        use_efficient_implementation: bool = False,
         zero_init: bool = True,
     ) -> None:
         super(Attention, self).__init__()
