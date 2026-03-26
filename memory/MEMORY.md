@@ -1,3 +1,4 @@
 - [Project Overview](project_overview.md) — Protenix: enterprise-hardened fork of ByteDance's AlphaFold 3 reproduction
 - [User Profile](user_profile.md) — Shad Nygren, maintainer of security-hardened Protenix fork
 - [Memory Location Preference](feedback_memory_location.md) — Memory files must live in repo, symlinked from ~/.claude
+- [gh CLI packages scope](feedback_gh_packages_scope.md) — gh auth drops read:packages on every re-auth; always check proactively
