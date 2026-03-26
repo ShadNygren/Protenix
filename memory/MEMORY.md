@@ -1,0 +1,3 @@
+- [Project Overview](project_overview.md) — Protenix: enterprise-hardened fork of ByteDance's AlphaFold 3 reproduction
+- [User Profile](user_profile.md) — Shad Nygren, maintainer of security-hardened Protenix fork
+- [Memory Location Preference](feedback_memory_location.md) — Memory files must live in repo, symlinked from ~/.claude
