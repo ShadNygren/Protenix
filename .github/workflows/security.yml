@@ -1,12 +1,16 @@
 name: Security Scanning
 
+# SECURITY NOTE (2026-03-26): Trivy supply chain compromise (CVE-2026-33634)
+# - Removed scheduled cron trigger (weekly builds disabled)
+# - All actions pinned to immutable commit SHAs
+# - Trivy action pinned to known-safe master HEAD (57a97c7e)
+# - See: https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/
+
 on:
   push:
-    branches: [ docker-pytorch, testing, release ]
+    branches: [ VHC-March2026, main, release ]
   pull_request:
-    branches: [ docker-pytorch ]
-  schedule:
-    - cron: '0 0 * * 0'  # Weekly scan on Sunday
+    branches: [ VHC-March2026, main ]
 
 jobs:
   trivy-scan:
@@ -17,10 +21,10 @@ jobs:
       security-events: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Run Trivy vulnerability scanner in repo mode
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # known-safe master HEAD
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -30,7 +34,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@480db559a14342288b67e54bd959dd52dc3ee68f # v3
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -47,10 +51,10 @@ jobs:
       packages: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -69,7 +73,7 @@ jobs:
 
       - name: Run Trivy on Docker image
         if: steps.image_check.outputs.exists == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # known-safe master HEAD
         with:
           image-ref: 'ghcr.io/shadnygren/protenix:${{ matrix.image }}'
           format: 'sarif'
@@ -79,7 +83,7 @@ jobs:
 
       - name: Upload Docker scan results
         if: steps.image_check.outputs.exists == 'true'
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@480db559a14342288b67e54bd959dd52dc3ee68f # v3
         with:
           sarif_file: 'docker-trivy-results.sarif'
         continue-on-error: true
@@ -87,12 +91,15 @@ jobs:
   dependency-check:
     name: OWASP Dependency Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Run OWASP Dependency Check
-        uses: dependency-check/Dependency-Check_Action@main
+        uses: dependency-check/Dependency-Check_Action@1e54355a8b4c8abaa8cc7d0b70aa655a3bb15a6c # main
         with:
           project: 'Protenix'
           path: '.'
@@ -100,9 +107,9 @@ jobs:
           args: >
             --enableRetired
             --enableExperimental
-        
+
       - name: Upload OWASP results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dependency-check-report
           path: reports/
@@ -110,12 +117,14 @@ jobs:
   licenses-scan:
     name: License Compliance Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
@@ -129,7 +138,7 @@ jobs:
           pip-licenses --fail-on="GPL,LGPL,AGPL,CC-BY-NC" || echo "Warning: Found restrictive licenses"
 
       - name: Upload license report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: license-report
           path: licenses.md
@@ -137,14 +146,16 @@ jobs:
   secrets-scan:
     name: Secret Detection
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0  # Full history for better detection
 
       - name: TruffleHog OSS
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@586f66d7886cd0b037c7c245d4a6e34ef357ab10 # main
         with:
           path: ./
           base: ${{ github.event.before || github.event.repository.default_branch }}
@@ -154,7 +165,7 @@ jobs:
         continue-on-error: true
 
       - name: TruffleHog OSS (Full Scan)
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@586f66d7886cd0b037c7c245d4a6e34ef357ab10 # main
         with:
           path: ./
           extra_args: --debug --only-verified
