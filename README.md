@@ -15,7 +15,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ShadNygren/Protenix/badge)](https://scorecard.dev/viewer/?uri=github.com/ShadNygren/Protenix)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![SBOM](https://img.shields.io/badge/SBOM-Available-brightgreen)](https://github.com/ShadNygren/Protenix/actions/workflows/sbom.yml)
-[![Trivy Scan](https://img.shields.io/badge/Trivy-Scanned-success)](https://github.com/ShadNygren/Protenix/security)
+[![Trivy Scan](https://img.shields.io/badge/Trivy-Suspended-red)](https://github.com/ShadNygren/Protenix/security)
 
 </div>
 
@@ -47,7 +47,7 @@ This fork enhances the original ByteDance Protenix with enterprise-grade improve
 
 #### 🔒 **Security & Compliance**
 - **Comprehensive Security Scanning**:
-  - Trivy vulnerability scanning for code and containers
+  - Trivy vulnerability scanning for code and containers (pinned to SHA; see [CVE-2026-33634](https://www.microsoft.com/en-us/security/blog/2026/03/24/detecting-investigating-defending-against-trivy-supply-chain-compromise/))
   - OWASP dependency checking
   - Secret detection with TruffleHog
   - License compliance verification
