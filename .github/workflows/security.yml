@@ -8,9 +8,9 @@ name: Security Scanning
 
 on:
   push:
-    branches: [ VHC-March2026, main, release ]
+    branches: [ VHC-Main, main, release ]
   pull_request:
-    branches: [ VHC-March2026, main ]
+    branches: [ VHC-Main, main ]
 
 jobs:
   trivy-scan:

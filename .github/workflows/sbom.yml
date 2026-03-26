@@ -2,7 +2,7 @@ name: SBOM Generation
 
 on:
   push:
-    branches: [ docker-pytorch, release ]
+    branches: [ VHC-Main ]
     tags: [ 'v*' ]
   workflow_dispatch:
 
@@ -10,12 +10,14 @@ jobs:
   sbom-python:
     name: Generate Python SBOM
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
@@ -32,7 +34,7 @@ jobs:
           cyclonedx-py requirements -i requirements.txt -o sbom-python.xml --output-format xml
 
       - name: Upload Python SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-python
           path: |
@@ -50,7 +52,7 @@ jobs:
       packages: read
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -69,7 +71,7 @@ jobs:
 
       - name: Generate SBOM using Syft
         if: steps.image_check.outputs.exists == 'true'
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ghcr.io/shadnygren/protenix:${{ matrix.image }}
           artifact-name: sbom-docker-${{ matrix.image }}
@@ -93,7 +95,7 @@ jobs:
       attestations: write
     steps:
       - name: Download all SBOMs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: sboms/
 
@@ -108,9 +110,9 @@ jobs:
           echo "- Docker Runtime+Weights Image SBOM" >> sbom-summary.md
           echo "- Docker Devel Image SBOM" >> sbom-summary.md
           echo "- Docker Devel+Weights Image SBOM" >> sbom-summary.md
-          
+
       - name: Upload SBOM Summary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-summary
           path: |
@@ -118,8 +120,8 @@ jobs:
             sboms/
 
       - name: Attest SBOM
-        uses: actions/attest-sbom@v1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+        uses: actions/attest-sbom@21f269c03431211cf2de4a1b5d90001746539dc9 # v1
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         with:
           subject-path: 'sboms/'
           sbom-path: 'sboms/'
