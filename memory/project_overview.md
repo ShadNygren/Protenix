@@ -8,4 +8,4 @@ Protenix (Protein + X) is an enterprise-grade, open-source biomolecular structur
 
 **Why:** Virtual Hipster Corporation fork adds security hardening (official base images, Trivy/OWASP scanning, SBOM, OpenSSF Scorecard), critical bug fixes (DeepSpeed #182, Triton fallback #185, ESM loading #176), and cloud deployment support (RunPod, multi-stage Docker).
 
-**How to apply:** Changes should maintain enterprise security posture. Docker builds are multi-variant (runtime/devel × with/without weights). CI/CD includes security scanning workflows. The active development branch is VHC-March2026, main is the PR target.
+**How to apply:** Changes should maintain enterprise security posture. Docker builds are multi-variant (runtime/devel × with/without weights). CI/CD includes security scanning workflows. The active development branch is VHC-Main, main is the PR target.

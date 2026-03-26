@@ -70,8 +70,7 @@ docker pull ghcr.io/shadnygren/protenix:latest
 
 ### Branch Strategy
 
-- `VHC-March2026` → Main development branch (triggers Docker build)
-- `release` → Production ready (triggers Docker build)
+- `VHC-Main` → Fork's main development branch (triggers Docker build and all CI/CD)
 
 ## Building Locally
 

@@ -2,9 +2,9 @@
 
 <div align="center">
 
-[![Docker Build Status](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml/badge.svg?branch=VHC-March2026)](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml)
+[![Docker Build Status](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml/badge.svg?branch=VHC-Main)](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml)
 [![Security Scan](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml/badge.svg)](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml)
-[![codecov](https://codecov.io/gh/ShadNygren/Protenix/branch/VHC-March2026/graph/badge.svg)](https://codecov.io/gh/ShadNygren/Protenix)
+[![codecov](https://codecov.io/gh/ShadNygren/Protenix/branch/VHC-Main/graph/badge.svg)](https://codecov.io/gh/ShadNygren/Protenix)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shadnygren/protenix?label=Docker%20Pulls)](https://github.com/ShadNygren/Protenix/pkgs/container/protenix)
 

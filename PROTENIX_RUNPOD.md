@@ -6,7 +6,7 @@
 
 Use the RunPod template with image:
 ```
-ghcr.io/shadnygren/protenix:VHC-March2026-devel-with-weights
+ghcr.io/shadnygren/protenix:VHC-Main-devel-with-weights
 ```
 
 **Recommended GPU**: NVIDIA A40 (46GB VRAM) or better
