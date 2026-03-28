@@ -47,6 +47,7 @@ RUN mkdir -p /var/run/sshd /root/.ssh && \
     echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
     echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
     echo "AuthorizedKeysFile /root/.ssh/authorized_keys" >> /etc/ssh/sshd_config && \
+    echo "PubkeyAcceptedAlgorithms +ssh-rsa" >> /etc/ssh/sshd_config && \
     echo 'PATH="/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' > /etc/environment && \
     printf '#!/bin/sh\nexport PATH="/opt/conda/bin:/usr/local/cuda/bin:$PATH"\nexport PROTENIX_ROOT_DIR=/root\n' > /etc/profile.d/protenix.sh && \
     chmod +x /etc/profile.d/protenix.sh && \

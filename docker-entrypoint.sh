@@ -27,15 +27,30 @@ cd /workspace 2>/dev/null || cd /root
 
 # Check if we're running in RunPod environment
 if [ -n "$RUNPOD_POD_ID" ] || [ -n "$RUNPOD_DC_ID" ]; then
-    echo "Detected RunPod environment"
-    echo "Starting SSH daemon for RunPod access..."
+    echo "Detected RunPod environment (Pod: ${RUNPOD_POD_ID})"
 
-    # Start SSH service if available
+    # Set up SSH authorized keys from PUBLIC_KEY env var (RunPod Full SSH method)
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    if [ -n "$PUBLIC_KEY" ]; then
+        echo "$PUBLIC_KEY" > /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        echo "SSH key installed from PUBLIC_KEY env var"
+    elif [ -n "$SSH_PUBLIC_KEY" ]; then
+        echo "$SSH_PUBLIC_KEY" > /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        echo "SSH key installed from SSH_PUBLIC_KEY env var"
+    else
+        echo "WARNING: No PUBLIC_KEY env var — SSH will require manual key setup via Web Terminal"
+    fi
+
+    # Start SSH service
+    echo "Starting SSH daemon for RunPod access..."
     if command -v sshd &> /dev/null; then
         service ssh start 2>/dev/null || /usr/sbin/sshd || true
     fi
 
     echo "Container ready for connections"
+    echo "SSH: ssh root@${RUNPOD_PUBLIC_IP} -p ${RUNPOD_TCP_PORT_22}"
     echo "To run Protenix inference, use the appropriate Python scripts in /workspace"
 
     # Keep container running with a sleep loop
