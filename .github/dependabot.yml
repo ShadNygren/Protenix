@@ -1,11 +1,33 @@
+# Dependabot: automatic GitHub Actions SHA updates
+#
+# SECURITY: We pin all actions to full 40-char COMMIT SHAs (not tags)
+# to prevent supply-chain attacks like the tj-actions/changed-files
+# incident (March 2025) where tags were rewritten to point to
+# malicious commits. Commit SHAs are the ONLY immutable Git reference.
+#
+# MAINTENANCE: Dependabot creates PRs when newer versions are available.
+# Always review changelogs before merging — check the action's release
+# notes, not just the SHA diff.
+#
+# IMPORTANT: Tags (including annotated tags) CAN be force-pushed.
+# Only commit SHAs are truly immutable. Never pin to tag object SHAs.
+
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "VHC-Main"
     schedule:
       interval: "weekly"
+      day: "monday"
     commit-message:
       prefix: "ci"
     labels:
       - "dependencies"
       - "github-actions"
+    # Group all action updates into a single PR for easier review
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
