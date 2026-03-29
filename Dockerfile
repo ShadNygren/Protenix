@@ -193,6 +193,45 @@ RUN mkdir -p /root/common && \
     echo "All data dependencies downloaded and verified:" && \
     ls -lh /root/common/
 
+# ============================================================================
+# Template Support for Inference
+# Enables --use_template true with remote template fetching from PDBe
+# Users can also SCP custom template CIF files to /root/mmcif/
+# ============================================================================
+
+# Download template search database (~12GB compressed)
+# This enables hmmsearch-based template finding during inference
+# Comment out this section if you don't need template support (saves ~15GB)
+ARG INCLUDE_TEMPLATE_DB=false
+RUN if [ "$INCLUDE_TEMPLATE_DB" = "true" ]; then \
+        echo "Downloading template search database..." && \
+        CDN="https://protenix.tos-cn-beijing.volces.com" && \
+        wget --no-check-certificate -q --show-progress -c -P /root ${CDN}/search_database.tar.gz && \
+        echo "Extracting search database..." && \
+        tar xzf /root/search_database.tar.gz -C /root && \
+        rm -f /root/search_database.tar.gz && \
+        echo "Search database installed at /root/search_database/" && \
+        ls -lh /root/search_database/; \
+    else \
+        echo "Template search database not included (use --build-arg INCLUDE_TEMPLATE_DB=true to include)"; \
+    fi
+
+# Download template metadata files (release dates, obsolete PDB mapping)
+# These are small (~1MB) and always useful for template date filtering
+RUN CDN="https://protenix.tos-cn-beijing.volces.com/common" && \
+    wget --no-check-certificate -q -O /root/common/release_date_cache.json ${CDN}/release_date_cache.json && \
+    wget --no-check-certificate -q -O /root/common/obsolete_to_successor.json ${CDN}/obsolete_to_successor.json && \
+    echo "Template metadata files downloaded:" && \
+    ls -lh /root/common/release_date_cache.json /root/common/obsolete_to_successor.json
+
+# Create template directories for user-provided CIF files
+# Users SCP template CIF files to /root/mmcif/ at runtime
+# Protenix will also fetch templates from PDBe on demand (fetch_remote=true)
+RUN mkdir -p /root/mmcif /root/mmcif_msa_template
+
+# Create seq_to_pdb_index.json (empty — populated at runtime or by MSA pipeline)
+RUN echo '{}' > /root/common/seq_to_pdb_index.json
+
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

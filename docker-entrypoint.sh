@@ -20,7 +20,32 @@ else
     echo "Weights: Not included (will download at runtime)"
 fi
 
+echo ""
+
+# Template support info
+TEMPLATE_MMCIF_DIR="/root/mmcif"
+TEMPLATE_DB="/root/search_database"
+TEMPLATE_COUNT=$(find $TEMPLATE_MMCIF_DIR -name "*.cif" 2>/dev/null | wc -l)
+echo "Templates: $TEMPLATE_COUNT CIF files in $TEMPLATE_MMCIF_DIR"
+if [ -d "$TEMPLATE_DB" ]; then
+    echo "Search DB: Installed at $TEMPLATE_DB"
+else
+    echo "Search DB: Not installed (use fetch_remote=true for PDBe on-demand fetching)"
+fi
+echo ""
+echo "To use templates:"
+echo "  1. SCP template CIF files: scp *.cif root@HOST:/root/mmcif/"
+echo "  2. Run: protenix pred --input input.json --out_dir output/ --use_template true"
+echo "  Note: Templates are fetched from PDBe on demand by default (fetch_remote=true)"
+echo "  Note: Set PROTENIX_MAX_TEMPLATE_DATE env var to include recent structures"
+echo "        (default cutoff is 2021-09-30; set to e.g. 2026-03-28 for all structures)"
+
 echo "==================================="
+
+# Apply custom max_template_date if set via env var
+if [ -n "$PROTENIX_MAX_TEMPLATE_DATE" ]; then
+    echo "Custom max_template_date: $PROTENIX_MAX_TEMPLATE_DATE"
+fi
 
 # Set working directory
 cd /workspace 2>/dev/null || cd /root
