@@ -28,13 +28,16 @@ jobs:
       id-token: write
 
     steps:
+      # SECURITY: Actions pinned to full SHA to prevent supply-chain attacks.
+      # MAINTENANCE: Update these hashes when upgrading action versions.
+      # Last updated: 2026-03-29. Verify at https://github.com/{owner}/{repo}/tags
       - name: "Checkout code"
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
         with:
           persist-credentials: false
 
       - name: "Run analysis"
-        uses: ossf/scorecard-action@0864cf19026789058feabb7e87baa5f140aac736 # v2.3.1
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3 (2025-09-30)
         with:
           results_file: results.sarif
           results_format: sarif
@@ -57,6 +60,6 @@ jobs:
       # Upload the results to GitHub's code scanning dashboard (optional).
       # Commenting out will disable upload of results to your repo's Code Scanning dashboard
       - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@480db559a14342288b67e54bd959dd52dc3ee68f # v3
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3 (2026-03-27)
         with:
           sarif_file: results.sarif
