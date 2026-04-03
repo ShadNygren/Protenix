@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import functools
 import pickle
 from collections import defaultdict
@@ -23,10 +24,9 @@ import biotite.structure as struc
 import biotite.structure.io.pdbx as pdbx
 import numpy as np
 from biotite.structure import AtomArray
-
-from configs.configs_data import data_configs
 from rdkit import Chem
 
+from configs.configs_data import data_configs
 from protenix.data.core.substructure_perms import get_substructure_perms
 from protenix.utils.logger import get_logger
 
@@ -91,7 +91,9 @@ def get_component_atom_array(
         logger.warning(f"Warning: get_component_atom_array() can not parse {ccd_code}")
         return None
     try:
-        comp = pdbx.get_component(ccd_cif, data_block=ccd_code, use_ideal_coord=True)
+        comp = pdbx.get_component(
+            ccd_cif, data_block=ccd_code, use_ideal_coord=True, allow_missing_coord=True
+        )
     except biotite.InvalidFileError as e:
         # Eg: UNL without atom.
         logger.warning(
@@ -113,8 +115,8 @@ def get_component_atom_array(
     # Map central atom index to leaving group (atom_indices) in component (atom_array).
     comp.central_to_leaving_groups = _map_central_to_leaving_groups(comp)
     if comp.central_to_leaving_groups is None:
-        logger.warning(
-            f"Warning: ccd {ccd_code} has leaving atom group bond to more than one central atom, central_to_leaving_groups is None."
+        logger.debug(
+            f"CCD {ccd_code} has leaving atom group bond to more than one central atom, central_to_leaving_groups is None."
         )
     return comp
 
@@ -278,8 +280,9 @@ def get_ccd_ref_info(ccd_code: str, return_perm: bool = True) -> dict[str, Any]:
                     ]
                 ]
             )
-        # np.ndarray[int]: atom permutation, shape:(n_atom_wo_h, n_perm)
-        results["perm"] = perm.T
+        results["perm"] = (
+            perm.T
+        )  # np.ndarray[int]: atom permutation, shape:(n_atom_wo_h, n_perm)
 
     return results
 
