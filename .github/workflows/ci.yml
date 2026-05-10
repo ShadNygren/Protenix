@@ -5,9 +5,9 @@ name: Python package
 
 on:
   push:
-    branches: [ "VHC-Main" ]
+    branches: [ "vhc-main" ]
   pull_request:
-    branches: [ "VHC-Main" ]
+    branches: [ "vhc-main" ]
 
 # Declare default permissions as read only.
 permissions: read-all

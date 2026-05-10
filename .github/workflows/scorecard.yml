@@ -12,7 +12,7 @@ on:
   schedule:
     - cron: '35 17 * * 0'
   push:
-    branches: [ "VHC-Main" ]
+    branches: [ "vhc-main" ]
 
 # Declare default permissions as read only.
 permissions: read-all

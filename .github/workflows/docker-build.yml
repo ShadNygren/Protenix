@@ -3,12 +3,12 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - VHC-Main
+      - vhc-main
     tags:
       - 'v*'
   pull_request:
     branches:
-      - VHC-Main
+      - vhc-main
   workflow_dispatch:  # Allow manual trigger
 
 env:
@@ -72,8 +72,8 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/VHC-Main' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/VHC-Main' && matrix.variant == 'runtime' && matrix.weights == false }}
+            type=raw,value=${{ matrix.variant }}${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/vhc-main' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/vhc-main' && matrix.variant == 'runtime' && matrix.weights == false }}
             type=sha,prefix={{branch}}-
 
       - name: Build and push Docker image
