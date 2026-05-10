@@ -1,14 +1,27 @@
 # Build argument to select base image variant
 # Options:
-#   - runtime (default): 3.3GB base, for production deployments
-#   - devel: 6.8GB base, includes CUDA toolkit, compilers, debuggers for development
+#   - runtime (default): smaller base, for production deployments
+#   - devel: larger base, includes CUDA toolkit, compilers, debuggers for
+#            development AND for pre-compiling fast_layer_norm_cuda_v2 during
+#            the build (avoids the ~10min JIT cost on first inference)
 # Usage: docker build --build-arg BASE_IMAGE_VARIANT=devel .
 ARG BASE_IMAGE_VARIANT=runtime
+
+# Build args for the base image version. Defaults target CUDA 12.8 for
+# Blackwell GPU support (RTX 5090 sm_120, RTX PRO 6000 Blackwell sm_120,
+# B300 sm_100/sm_120). Older CUDA 12.6 base still usable for non-Blackwell
+# GPUs (A100, H100, RTX 4090, etc.) by passing
+#   --build-arg PYTORCH_VERSION=2.7.1 --build-arg CUDA_VERSION=12.6
+# at build time. Compatible PyTorch images on Docker Hub:
+#   pytorch/pytorch:2.7.1-cuda12.6-cudnn9-{runtime,devel}
+#   pytorch/pytorch:2.8.0-cuda12.8-cudnn9-{runtime,devel}
+ARG PYTORCH_VERSION=2.8.0
+ARG CUDA_VERSION=12.8
 
 # ============================================================================
 # STAGE 1: Base Protenix image (runtime or devel)
 # ============================================================================
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-${BASE_IMAGE_VARIANT} AS base
+FROM pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn9-${BASE_IMAGE_VARIANT} AS base
 
 # Label the image with the variant used
 LABEL org.opencontainers.image.description="Protenix with PyTorch ${BASE_IMAGE_VARIANT} base image"
@@ -24,6 +37,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/conda/bin:/usr/local/cuda/bin:${PATH}
 
 # Install system dependencies
+# Includes:
+#  - Build/dev tools: git, gcc/g++, make, libc6-dev
+#  - Protenix-specific: postgresql, hmmer, kalign (MSA + database tools)
+#  - SSH for cloud pod access (RunPod, Salad, etc.): openssh-{server,client}
+#  - Cloud-ops + R2/S3 tools: fuse3, libfuse3-3, s3fs (S3-compat FUSE mount),
+#    unzip/zip/p7zip-full (block ZIP extraction), rsync, jq (JSON queries),
+#    curl (AWS CLI installer + general)
+#  - Operator UX: htop, nvtop (GPU monitor), tmux (persistent sessions),
+#    mosh (robust SSH alternative), less, vim-tiny, nano
+#  - General: wget, ca-certificates
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git \
@@ -35,10 +58,44 @@ RUN apt-get update && \
         hmmer \
         kalign \
         wget \
+        curl \
+        ca-certificates \
         openssh-server \
         openssh-client \
+        fuse3 \
+        libfuse3-3 \
+        s3fs \
+        unzip \
+        zip \
+        p7zip-full \
+        rsync \
+        jq \
+        htop \
+        nvtop \
+        tmux \
+        mosh \
+        less \
+        vim-tiny \
+        nano \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI v2 from official installer (apt's awscli is v1 and deprecated)
+RUN ARCH=$(uname -m) && \
+    case "${ARCH}" in \
+        x86_64)  AWS_ARCH=x86_64 ;; \
+        aarch64) AWS_ARCH=aarch64 ;; \
+        *)       echo "Unsupported architecture: ${ARCH}"; exit 1 ;; \
+    esac && \
+    curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    rm -rf /tmp/awscliv2.zip /tmp/aws && \
+    aws --version
+
+# Install rclone (best-in-class S3-compatible sync + mount tool)
+# Used for: rclone copy s3:bucket/key local/, rclone mount, rclone sync
+RUN curl -sL https://rclone.org/install.sh | bash 2>&1 && rclone --version | head -1
 
 # Configure SSH for RunPod (keys are injected at runtime by RunPod or docker-entrypoint.sh)
 RUN mkdir -p /var/run/sshd /root/.ssh && \
@@ -231,6 +288,62 @@ RUN mkdir -p /root/mmcif /root/mmcif_msa_template
 
 # Create seq_to_pdb_index.json (empty — populated at runtime or by MSA pipeline)
 RUN echo '{}' > /root/common/seq_to_pdb_index.json
+
+# ============================================================================
+# Placeholder files to prevent FileNotFoundError on training init
+# Even with their corresponding features disabled (RNA MSA, eval suites),
+# Protenix's data loaders try to open these files at startup.
+# Background: PROTENIX_DOCKER_MISSING_FILES.md (downstream user project)
+# ============================================================================
+
+# RNA MSA placeholder
+RUN mkdir -p /root/rna_msa && echo '{}' > /root/rna_msa/rna_sequence_to_pdb_chains.json
+
+# Evaluation dataset directories (empty — users mount real data when needed)
+RUN mkdir -p /root/indices /root/posebusters_bioassembly /root/posebusters_mmcif \
+             /root/recentPDB_bioassembly
+
+# Empty evaluation index CSVs with correct column headers so pandas doesn't crash
+RUN echo '"entity_1_id","chain_1_id","mol_1_type","cluster_1_id","entity_2_id","chain_2_id","mol_2_type","cluster_2_id","cluster_id","pdb_id","assembly_id","release_date","num_tokens","num_prot_chains","resolution","type","mol_type_group","sub_mol_1_type","sub_mol_2_type","eval_type"' \
+    > /root/indices/recentPDB_low_homology_maxtoken1536.csv && \
+    cp /root/indices/recentPDB_low_homology_maxtoken1536.csv \
+       /root/indices/posebusters_indices_mainchain_interface.csv
+
+# Empty PDB list for evaluation
+RUN touch /root/indices/recentPDB_low_homology_maxtoken1024_sample384_pdb_id.txt
+
+# ============================================================================
+# Generic Protenix operational tools shipped at /opt/protenix-tools/
+# Available on PATH so users can call them directly:
+#   checkpoint_watcher.py    — daemon: uploads each new <step>.pt + ema_*.pt
+#                              pair to S3-compatible storage with sha256+md5
+#                              metadata; idempotent state file. Works against
+#                              AWS S3, Cloudflare R2, MinIO, RunPod S3, etc.
+#                              by setting --env-file with the right endpoint.
+#   find_latest_r2_checkpoint.py — disaster-recovery: lists S3 checkpoints/,
+#                              returns + downloads highest-step pair on a
+#                              fresh pod after an interruption.
+#   r2_object_exists.py      — head_object check for R2/S3 (used by cleanup
+#                              scripts to verify-before-delete).
+#   vram_monitor.sh          — persistent 1-second VRAM polling daemon;
+#                              daily-rotated CSV. Use to collect peak-VRAM
+#                              telemetry across long training runs.
+#   inspect_checkpoint_step.py — reads the `step` field stored inside a
+#                              Protenix .pt file dict; verifies filename
+#                              matches stored value.
+#   extract_training_loss.py — parses Protenix training.log; reports per-step
+#                              loss/distogram/pae/plddt/lddt metrics.
+#   archive_discarded_artifacts.py — archive flawed/abandoned experimental
+#                              artifacts to a separate S3 prefix with
+#                              sha256+md5 metadata + WHY_ARCHIVED.md note.
+# ============================================================================
+COPY scripts/protenix-tools/ /opt/protenix-tools/
+RUN chmod +x /opt/protenix-tools/*.py /opt/protenix-tools/*.sh
+ENV PATH=/opt/protenix-tools:${PATH}
+
+# Credential templates for users — copies, not actual credentials
+COPY config/cloudflare-r2-template.env /etc/cloudflare-r2-template.env
+COPY config/aws-credentials-template /etc/aws-credentials-template
 
 # Copy entrypoint script and set permissions
 COPY docker-entrypoint.sh /usr/local/bin/
