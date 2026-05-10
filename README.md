@@ -133,8 +133,25 @@ Protenix is built for high-accuracy structure prediction. It serves as an initia
 
 ### 🛠 Quick Installation
 
+> ⚠️ **This fork is NOT the same as the official PyPI package.** `pip install protenix` from PyPI installs **upstream ByteDance Protenix**, which does **not** include any of this fork's enterprise enhancements (hardened Docker images, security scanning, Western-friendly distribution, R2/S3 cloud-ops tools, generic utility scripts at `/opt/protenix-tools/`, Blackwell-GPU-ready CUDA 12.8 base, FUSE/AWS CLI/rclone, etc. — see the "Enterprise Improvements in This Fork" section at the top). To use the enhancements documented in this README, install via Docker or git as shown below.
+
+**Recommended (this fork's hardened Docker image):**
 ```bash
-pip install protenix
+docker pull ghcr.io/shadnygren/protenix:VHC-Main-devel-with-weights
+docker run --gpus all -it ghcr.io/shadnygren/protenix:VHC-Main-devel-with-weights
+```
+Image variants and tags are documented in [DOCKER.md](DOCKER.md). Other variants: `:runtime`, `:runtime-with-weights`, `:devel`, `:VHC-Main-<short-sha>-devel-with-weights` (immutable SHA-pinned).
+
+**Alternative (this fork's source, editable install):**
+```bash
+git clone -b VHC-Main https://github.com/ShadNygren/Protenix.git
+cd Protenix
+pip install -e .
+```
+
+**If you want UPSTREAM ByteDance Protenix** (no fork enhancements):
+```bash
+pip install --upgrade protenix --index-url https://pypi.org/simple
 ```
 
 ### 🧬 Quick Prediction
