@@ -62,6 +62,7 @@ RUN apt-get update && \
         ca-certificates \
         openssh-server \
         openssh-client \
+        openssl \
         fuse3 \
         libfuse3-3 \
         s3fs \
