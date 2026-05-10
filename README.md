@@ -2,9 +2,9 @@
 
 <div align="center">
 
-[![Docker Build Status](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml/badge.svg?branch=VHC-Main)](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml)
+[![Docker Build Status](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml/badge.svg?branch=vhc-main)](https://github.com/ShadNygren/Protenix/actions/workflows/docker-build.yml)
 [![Security Scan](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml/badge.svg)](https://github.com/ShadNygren/Protenix/actions/workflows/security.yml)
-[![codecov](https://codecov.io/gh/ShadNygren/Protenix/branch/VHC-Main/graph/badge.svg)](https://codecov.io/gh/ShadNygren/Protenix)
+[![codecov](https://codecov.io/gh/ShadNygren/Protenix/branch/vhc-main/graph/badge.svg)](https://codecov.io/gh/ShadNygren/Protenix)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shadnygren/protenix?label=Docker%20Pulls)](https://github.com/ShadNygren/Protenix/pkgs/container/protenix)
 
@@ -137,14 +137,14 @@ Protenix is built for high-accuracy structure prediction. It serves as an initia
 
 **Recommended (this fork's hardened Docker image):**
 ```bash
-docker pull ghcr.io/shadnygren/protenix:VHC-Main-devel-with-weights
-docker run --gpus all -it ghcr.io/shadnygren/protenix:VHC-Main-devel-with-weights
+docker pull ghcr.io/shadnygren/protenix:vhc-main-devel-with-weights
+docker run --gpus all -it ghcr.io/shadnygren/protenix:vhc-main-devel-with-weights
 ```
-Image variants and tags are documented in [DOCKER.md](DOCKER.md). Other variants: `:runtime`, `:runtime-with-weights`, `:devel`, `:VHC-Main-<short-sha>-devel-with-weights` (immutable SHA-pinned).
+Image variants and tags are documented in [DOCKER.md](DOCKER.md). Other variants: `:runtime`, `:runtime-with-weights`, `:devel`, `:vhc-main-<short-sha>-devel-with-weights` (immutable SHA-pinned).
 
 **Alternative (this fork's source, editable install):**
 ```bash
-git clone -b VHC-Main https://github.com/ShadNygren/Protenix.git
+git clone -b vhc-main https://github.com/ShadNygren/Protenix.git
 cd Protenix
 pip install -e .
 ```

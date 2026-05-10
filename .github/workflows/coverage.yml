@@ -2,9 +2,9 @@ name: Code Coverage
 
 on:
   push:
-    branches: [ VHC-Main ]
+    branches: [ vhc-main ]
   pull_request:
-    branches: [ VHC-Main ]
+    branches: [ vhc-main ]
 
 permissions: read-all
 

@@ -16,7 +16,7 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "VHC-Main"
+    target-branch: "vhc-main"
     schedule:
       interval: "weekly"
       day: "monday"

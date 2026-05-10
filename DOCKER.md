@@ -70,7 +70,7 @@ docker pull ghcr.io/shadnygren/protenix:latest
 
 ### Branch Strategy
 
-- `VHC-Main` → Fork's main development branch (triggers Docker build and all CI/CD)
+- `vhc-main` → Fork's main development branch (triggers Docker build and all CI/CD)
 
 ## Building Locally
 
