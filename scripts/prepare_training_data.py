@@ -43,6 +43,11 @@ def gen_a_bioassembly_data(
     Returns:
         Optional[list[dict]]: A list of sample indices if data is successfully generated, otherwise None.
     """
+    # Skip if already processed (resume support)
+    pdb_id_guess = mmcif.stem.split(".")[0].lower()
+    if (bioassembly_output_dir / f"{pdb_id_guess}.pkl.gz").exists():
+        return None
+
     if distillation:
         dataset = "Distillation"
     else:
