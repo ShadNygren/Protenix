@@ -4,6 +4,17 @@
 
 set -e
 
+# === Decrypt any *_ENCRYPTED env vars before anything else ===
+# Source the decrypt script so exports persist into this shell + child processes.
+# See /opt/protenix-tools/decrypt_env_vars.sh and ../scripts/encrypt_env.sh.
+# This is security-through-obscurity (passphrase baked in image), useful for
+# hiding secrets from casual UI/dashboard inspection on platforms like Salad
+# where env vars are otherwise visible in plaintext.
+if [ -r /opt/protenix-tools/decrypt_env_vars.sh ]; then
+    # shellcheck source=/dev/null
+    source /opt/protenix-tools/decrypt_env_vars.sh || true
+fi
+
 # Print environment info
 echo "==================================="
 echo "Protenix Docker Container Started"
