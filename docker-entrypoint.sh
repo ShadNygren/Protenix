@@ -61,45 +61,48 @@ fi
 # Set working directory
 cd /workspace 2>/dev/null || cd /root
 
-# Check if we're running in RunPod environment
-if [ -n "$RUNPOD_POD_ID" ] || [ -n "$RUNPOD_DC_ID" ]; then
-    echo "Detected RunPod environment (Pod: ${RUNPOD_POD_ID})"
+# === Universal SSH setup ===
+# Any orchestrator that supports interactive access (Salad, RunPod, k8s with
+# initContainers, etc.) typically injects the user's SSH public key into a
+# well-known env var. Set up authorized_keys + start sshd unconditionally so
+# the container is reachable on whichever platform deployed it. Harmless if
+# no key was provided — sshd just won't have any keys to authenticate.
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+SSH_KEY="${PUBLIC_KEY:-${SSH_PUBLIC_KEY:-}}"
+if [ -n "$SSH_KEY" ]; then
+    echo "$SSH_KEY" > /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    echo "[entrypoint] SSH key installed from PUBLIC_KEY/SSH_PUBLIC_KEY env var"
+else
+    echo "[entrypoint] WARNING: no PUBLIC_KEY/SSH_PUBLIC_KEY env var — SSH will require manual key setup"
+fi
 
-    # Set up SSH authorized keys from PUBLIC_KEY env var (RunPod Full SSH method)
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh
-    if [ -n "$PUBLIC_KEY" ]; then
-        echo "$PUBLIC_KEY" > /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        echo "SSH key installed from PUBLIC_KEY env var"
-    elif [ -n "$SSH_PUBLIC_KEY" ]; then
-        echo "$SSH_PUBLIC_KEY" > /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        echo "SSH key installed from SSH_PUBLIC_KEY env var"
-    else
-        echo "WARNING: No PUBLIC_KEY env var — SSH will require manual key setup via Web Terminal"
-    fi
+if command -v sshd &>/dev/null; then
+    service ssh start 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
+    echo "[entrypoint] sshd started"
+fi
 
-    # Start SSH service
-    echo "Starting SSH daemon for RunPod access..."
-    if command -v sshd &> /dev/null; then
-        service ssh start 2>/dev/null || /usr/sbin/sshd || true
-    fi
+# Helpful per-platform connection hint
+if [ -n "$RUNPOD_POD_ID" ]; then
+    echo "[entrypoint] RunPod pod: ssh root@${RUNPOD_PUBLIC_IP} -p ${RUNPOD_TCP_PORT_22}"
+elif [ -n "$SALAD_MACHINE_ID" ]; then
+    echo "[entrypoint] Salad machine: $SALAD_MACHINE_ID — open the Terminal from the Instances tab in the Salad portal"
+fi
 
-    echo "Container ready for connections"
-    echo "SSH: ssh root@${RUNPOD_PUBLIC_IP} -p ${RUNPOD_TCP_PORT_22}"
-    echo "To run Protenix inference, use the appropriate Python scripts in /workspace"
-
-    # Keep container running with a sleep loop
-    while true; do
-        sleep 3600
-    done
-elif [ $# -eq 0 ]; then
-    # No command provided and not in RunPod - start interactive shell
-    echo "Starting interactive shell..."
-    echo "To run Protenix inference, use the appropriate Python scripts."
-    echo ""
+# === Decide what to run ===
+# 1. Explicit command via Docker CMD or `docker run image <args>` → run it
+# 2. No command + interactive TTY (`docker run -it`) → drop into bash
+# 3. No command + no TTY (any container orchestrator: Salad, RunPod, k8s,
+#    ECS, Cloud Run, ...) → sleep forever so the container stays alive for
+#    SSH-driven interactive work. This is the universal fix for the
+#    "container exits in 4 seconds with code 0" crash loop that every Docker
+#    image hits when the orchestrator doesn't attach a TTY.
+if [ $# -gt 0 ]; then
+    exec "$@"
+elif [ -t 0 ]; then
+    echo "[entrypoint] interactive TTY detected — starting bash"
     exec /bin/bash
 else
-    # Execute the provided command
-    exec "$@"
+    echo "[entrypoint] no command, no TTY — sleeping forever (use SSH for interactive work)"
+    exec sleep infinity
 fi
