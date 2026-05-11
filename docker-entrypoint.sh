@@ -90,19 +90,27 @@ elif [ -n "$SALAD_MACHINE_ID" ]; then
 fi
 
 # === Decide what to run ===
-# 1. Explicit command via Docker CMD or `docker run image <args>` → run it
-# 2. No command + interactive TTY (`docker run -it`) → drop into bash
-# 3. No command + no TTY (any container orchestrator: Salad, RunPod, k8s,
-#    ECS, Cloud Run, ...) → sleep forever so the container stays alive for
-#    SSH-driven interactive work. This is the universal fix for the
-#    "container exits in 4 seconds with code 0" crash loop that every Docker
-#    image hits when the orchestrator doesn't attach a TTY.
-if [ $# -gt 0 ]; then
+# 1. Explicit non-trivial command via `docker run image <args>` → run it
+# 2. No command (or trivial bash-only CMD) + interactive TTY → drop into bash
+# 3. No command (or trivial bash-only CMD) + no TTY (orchestrator: Salad,
+#    RunPod, k8s, ECS, Cloud Run, ...) → sleep forever so the container
+#    stays alive for SSH-driven interactive work.
+#
+# We treat `CMD ["/bin/bash"]` or `CMD ["bash"]` as "no real command" because
+# bash without a TTY exits immediately, defeating any orchestrator deploy.
+# The Dockerfile in this repo intentionally omits CMD for that reason; this
+# detection is defensive in case someone re-adds it later.
+is_trivial_bash=0
+if [ "$#" -eq 1 ] && { [ "$1" = "/bin/bash" ] || [ "$1" = "bash" ] || [ "$1" = "/bin/sh" ] || [ "$1" = "sh" ]; }; then
+    is_trivial_bash=1
+fi
+
+if [ "$#" -gt 0 ] && [ "$is_trivial_bash" -eq 0 ]; then
     exec "$@"
 elif [ -t 0 ]; then
     echo "[entrypoint] interactive TTY detected — starting bash"
     exec /bin/bash
 else
-    echo "[entrypoint] no command, no TTY — sleeping forever (use SSH for interactive work)"
+    echo "[entrypoint] no command (or trivial bash CMD), no TTY — sleeping forever (use SSH for interactive work)"
     exec sleep infinity
 fi

@@ -353,6 +353,13 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Set working directory
 WORKDIR /workspace
 
-# Set entrypoint for RunPod and other cloud environments
+# Set entrypoint for RunPod, Salad, k8s, ECS and other cloud environments.
+# NO CMD: the entrypoint script's universal decision tree handles all cases:
+#   - explicit args → exec them
+#   - no args + TTY (`docker run -it`) → bash
+#   - no args + no TTY (any orchestrator deploy) → sleep infinity
+# Adding `CMD ["/bin/bash"]` here BREAKS the orchestrator case because the
+# script then receives /bin/bash as $@ and execs it; bash exits in seconds
+# without a TTY, triggering an Exited:0 crash loop on Salad/k8s/ECS/etc.
+# Don't re-add CMD without first updating the entrypoint to special-case it.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["/bin/bash"]
