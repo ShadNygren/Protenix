@@ -112,9 +112,14 @@ def encrypt_bytes_to_disk(plaintext, dek, output_path):
         output_path: destination .age file. Parent dirs are created.
 
     Returns the ciphertext length in bytes.
+
+    Note on pyrage API: the passphrase encrypt/decrypt functions live in the
+    `pyrage.passphrase` submodule, NOT at top level. Earlier drafts of this
+    file used `pyrage.passphrase_encrypt(...)` which doesn't exist — that was
+    a mistake corrected in commit-after-v2-smoke-test.
     """
     pyrage = _pyrage_mod()
-    ciphertext = pyrage.passphrase_encrypt(plaintext, _to_passphrase(dek))
+    ciphertext = pyrage.passphrase.encrypt(plaintext, _to_passphrase(dek))
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(ciphertext)
@@ -125,7 +130,7 @@ def decrypt_disk_to_bytes(input_path, dek):
     """Read an age-passphrase .age file; return decrypted bytes."""
     pyrage = _pyrage_mod()
     ciphertext = Path(input_path).read_bytes()
-    return pyrage.passphrase_decrypt(ciphertext, _to_passphrase(dek))
+    return pyrage.passphrase.decrypt(ciphertext, _to_passphrase(dek))
 
 
 def encrypt_file_in_place(file_path, dek, delete_original=True):
