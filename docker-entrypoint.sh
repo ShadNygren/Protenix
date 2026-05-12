@@ -7,12 +7,54 @@ set -e
 # === Decrypt any *_ENCRYPTED env vars before anything else ===
 # Source the decrypt script so exports persist into this shell + child processes.
 # See /opt/protenix-tools/decrypt_env_vars.sh and ../scripts/encrypt_env.sh.
-# This is security-through-obscurity (passphrase baked in image), useful for
-# hiding secrets from casual UI/dashboard inspection on platforms like Salad
-# where env vars are otherwise visible in plaintext.
+# This is security-through-obscurity (passphrase derived from SHA256(SSH pubkey)),
+# useful for hiding secrets from casual UI/dashboard inspection on platforms
+# like RunPod where the pubkey is auto-injected. On Salad the pubkey isn't
+# injected, so this scheme silently no-ops there — see the next section.
 if [ -r /opt/protenix-tools/decrypt_env_vars.sh ]; then
     # shellcheck source=/dev/null
     source /opt/protenix-tools/decrypt_env_vars.sh || true
+fi
+
+# === SSH-delivered credentials (Salad-friendly DEK + R2 creds delivery) ===
+# If the user SSH'd in and dropped creds into /dev/shm/secure/creds (tmpfs,
+# RAM-only), source them now so subsequent training scripts inherit
+# CLOUDFLARE_R2_*, PROTENIX_DEK, AWS_* etc. without touching host disk.
+#
+# Delivery pattern from the user's laptop:
+#   ssh root@HOST -p PORT bash -s <<EOF
+#   mkdir -p /dev/shm/secure && chmod 700 /dev/shm/secure
+#   cat > /dev/shm/secure/creds <<INNER
+#   export PROTENIX_DEK="<64-char hex>"
+#   export CLOUDFLARE_R2_ACCESS_KEY_ID="..."
+#   export CLOUDFLARE_R2_SECRET_ACCESS_KEY="..."
+#   export CLOUDFLARE_R2_ENDPOINT="..."
+#   INNER
+#   chmod 600 /dev/shm/secure/creds
+#   EOF
+#
+# The file is in tmpfs and evaporates on container restart — no host SSD trace.
+if [ -r /dev/shm/secure/creds ]; then
+    echo "[entrypoint] sourcing SSH-delivered credentials from /dev/shm/secure/creds"
+    # shellcheck source=/dev/null
+    source /dev/shm/secure/creds || true
+fi
+
+# === CloudWatch Logs streaming (optional) ===
+# If AWS_CLOUDWATCH_LOG_GROUP is set (plus real AWS creds — separate from
+# CloudFlare R2), configure Python's root logger to also push to CloudWatch.
+# Skipped silently when not configured.
+if [ -n "$AWS_CLOUDWATCH_LOG_GROUP" ] && [ -r /opt/protenix-tools/setup_cloudwatch_logging.py ]; then
+    echo "[entrypoint] AWS_CLOUDWATCH_LOG_GROUP=$AWS_CLOUDWATCH_LOG_GROUP — initializing CloudWatch logging"
+    python3 /opt/protenix-tools/setup_cloudwatch_logging.py --test 2>&1 | head -5 || true
+fi
+
+# === Optional: decrypt incoming structures before training ===
+# Activates only if PROTENIX_DECRYPT_STRUCTURES=true and a DEK is available.
+# Run as a quick check at boot; training itself will re-invoke if needed.
+if [ "$PROTENIX_DECRYPT_STRUCTURES" = "true" ] && [ -r /opt/protenix-tools/decrypt_structures.py ]; then
+    echo "[entrypoint] PROTENIX_DECRYPT_STRUCTURES=true — decrypting structures"
+    python3 /opt/protenix-tools/decrypt_structures.py 2>&1 | tail -10 || true
 fi
 
 # Print environment info

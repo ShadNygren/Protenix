@@ -43,6 +43,17 @@ import boto3
 from botocore.config import Config
 from boto3.s3.transfer import TransferConfig
 
+# Optional: secure-checkpoint helpers (lives next to this file)
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    from secure_checkpoint import (  # type: ignore
+        load_dek,
+        encrypt_file_in_place,
+    )
+    _SECURE_AVAILABLE = True
+except Exception:  # pyrage may not be installed in older images
+    _SECURE_AVAILABLE = False
+
 
 def load_env(env_file: Path) -> None:
     with open(env_file) as f:
@@ -225,6 +236,31 @@ def main() -> int:
     state = load_state(args.state_file)
     sizes_history: dict[str, tuple[int, int]] = {}
 
+    # === Optional disk encryption after successful R2 upload ===
+    # Encryption gives us a recovery copy that's safe-at-rest on the host SSD.
+    # Salad /workspace is wiped on container restart so this is mostly defense
+    # against in-flight forensic capture during the container's lifetime, not
+    # post-mortem analysis. Controlled by PROTENIX_ENCRYPT_LOCAL_CHECKPOINTS
+    # (default true) and gated on actually having a DEK.
+    dek = None
+    dek_source = None
+    encrypt_enabled = os.environ.get("PROTENIX_ENCRYPT_LOCAL_CHECKPOINTS", "true").lower() == "true"
+    if encrypt_enabled and _SECURE_AVAILABLE:
+        try:
+            dek, dek_source = load_dek()
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[watcher] load_dek failed: {e} (continuing without encryption)", flush=True)
+    if dek:
+        print(f"[watcher] post-upload encryption ENABLED (DEK source: {dek_source})", flush=True)
+    elif encrypt_enabled and _SECURE_AVAILABLE:
+        print(f"[watcher] no DEK available — checkpoints will NOT be encrypted on disk", flush=True)
+    elif not encrypt_enabled:
+        print(f"[watcher] PROTENIX_ENCRYPT_LOCAL_CHECKPOINTS=false — encryption disabled", flush=True)
+    else:
+        print(f"[watcher] secure_checkpoint module unavailable (older image?) — no encryption", flush=True)
+
     while True:
         try:
             pending = find_pending_pairs(args.runs_root, sizes_history, state,
@@ -239,6 +275,22 @@ def main() -> int:
                 e_result = upload_one(s3, ema_path, args.bucket,
                                       f"{base_key}/{step}_ema_0.999.pt",
                                       run_name, step, category)
+                # Post-upload encryption: replace cleartext .pt files on local
+                # disk with .pt.age blobs. Only on successful upload (so we
+                # never lose data — R2 has the canonical copy).
+                enc_result = {}
+                if dek and not m_result.get("skipped"):
+                    try:
+                        enc_model = encrypt_file_in_place(model_path, dek, delete_original=True)
+                        enc_result["model_age"] = str(enc_model)
+                    except Exception as e:
+                        print(f"  ! encrypt failed for {model_path.name}: {e}", flush=True)
+                if dek and not e_result.get("skipped"):
+                    try:
+                        enc_ema = encrypt_file_in_place(ema_path, dek, delete_original=True)
+                        enc_result["ema_age"] = str(enc_ema)
+                    except Exception as e:
+                        print(f"  ! encrypt failed for {ema_path.name}: {e}", flush=True)
                 key = f"{run_name}/{step}"
                 state["uploaded"][key] = {
                     "uploaded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",
@@ -246,11 +298,13 @@ def main() -> int:
                     "category": category,
                     "model": m_result,
                     "ema": e_result,
+                    **({"encrypted": enc_result} if enc_result else {}),
                 }
                 save_state(args.state_file, state)
                 m_skip = "SKIP" if m_result.get("skipped") else f"{m_result.get('rate_mb_per_s', 0)} MB/s"
                 e_skip = "SKIP" if e_result.get("skipped") else f"{e_result.get('rate_mb_per_s', 0)} MB/s"
-                print(f"  ✓ {step}.pt {m_skip}, {step}_ema {e_skip}", flush=True)
+                enc_note = " + encrypted local copy" if enc_result else ""
+                print(f"  ✓ {step}.pt {m_skip}, {step}_ema {e_skip}{enc_note}", flush=True)
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] ERROR: {e}", flush=True)
 
