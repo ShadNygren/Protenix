@@ -223,6 +223,14 @@ def main() -> int:
                     help="Seconds between polls")
     ap.add_argument("--once", action="store_true",
                     help="Do one pass then exit (useful for cron / one-shot)")
+    ap.add_argument("--prefix-override", default=None,
+                    help="If set, all uploads go to "
+                         "checkpoints/<prefix-override>/<run_name>/<step>.pt "
+                         "regardless of the auto-categorize() classification. "
+                         "Use for non-production environments (e.g., Salad "
+                         "testing nodes) where ALL output must be quarantined "
+                         "in a known prefix for later cleanup. Examples: "
+                         "--prefix-override salad_testing/<node-id>")
     args = ap.parse_args()
 
     load_env(args.env_file)
@@ -266,7 +274,10 @@ def main() -> int:
             pending = find_pending_pairs(args.runs_root, sizes_history, state,
                                          skip_stability_check=args.once)
             for model_path, ema_path, run_name, step in pending:
-                category = categorize(run_name)
+                if args.prefix_override:
+                    category = args.prefix_override
+                else:
+                    category = categorize(run_name)
                 base_key = f"checkpoints/{category}/{run_name}"
                 print(f"[{time.strftime('%H:%M:%S')}] Uploading {run_name}/{step} ({category})...", flush=True)
                 m_result = upload_one(s3, model_path, args.bucket,
