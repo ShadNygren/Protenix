@@ -48,6 +48,12 @@ def compile(
     except Exception:
         _supported = {"70", "80", "86", "90"}  # safe defaults
 
+    # Extended for full Blackwell support:
+    #   sm_100 = datacenter Blackwell (B100, B200)
+    #   sm_103 = Blackwell Ultra (B300)
+    #   sm_120 = consumer Blackwell (RTX 5090, RTX PRO Blackwell line)
+    # Auto-detect filters down to what the installed nvcc actually supports
+    # via `_supported`, so this list is just the upper bound.
     _wanted = [
         ("70", "70"),
         ("80", "80"),
@@ -55,6 +61,8 @@ def compile(
         ("89", "89"),
         ("90", "90"),
         ("100", "100"),
+        ("103", "103"),
+        ("120", "120"),
     ]
     gencode_flags = []
     for compute, sm in _wanted:

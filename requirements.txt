@@ -1,6 +1,9 @@
-torch==2.7.1
-torchvision==0.22.1
-torchaudio==2.7.1
+# torch/torchvision/torchaudio intentionally NOT pinned here — they come from
+# the base Docker image (PyTorch 2.8.0 + CUDA 12.8, see Dockerfile ARG). Pinning
+# torch==2.7.1 here would override the base image's PyTorch and lose sm_120
+# (RTX 5090 Blackwell consumer) support. See SALAD.md "v2.1 sm_120 regression"
+# for the failure mode (CUDA "no kernel image is available for execution on the
+# device" on sm_120).
 cuequivariance-ops-torch-cu12==0.8.0
 cuequivariance-torch==0.8.0
 scipy>=1.9.0
@@ -22,7 +25,9 @@ scikit-learn==1.7.1
 scikit-learn-extra==0.3.0
 deepspeed==0.17.5
 pydantic>=2.0.0
-triton==3.3.1
+# triton is bundled with the base PyTorch image (2.8 ships Triton 3.4).
+# Pinning triton==3.3.1 here would force a downgrade incompatible with torch 2.8.
+# triton==3.3.1   # removed for v2.2 sm_120 fix
 optree==0.17.0
 protobuf==6.31.1
 icecream==2.1.7
