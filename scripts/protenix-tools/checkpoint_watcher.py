@@ -242,6 +242,14 @@ def main() -> int:
                     help="Override the auto-derived heartbeat key. If unset "
                          "and --heartbeat is on, defaults to "
                          "ops/<prefix-override or hostname>/heartbeat.json")
+    ap.add_argument("--enforce-naming", action="store_true",
+                    help="Validate every run_name against SEED_CONVENTION.md "
+                         "regex before uploading. Non-compliant names are "
+                         "STILL uploaded (we never lose data) but a record is "
+                         "appended to R2 at ops/<prefix>/naming_violations.jsonl "
+                         "for human review. See SEED_CONVENTION.md sections "
+                         "'Run naming for resumed runs' and the chain script "
+                         "patterns for the canonical forms.")
     args = ap.parse_args()
 
     load_env(args.env_file)
@@ -302,6 +310,40 @@ def main() -> int:
         default=None,
     )
 
+    # === Naming-convention enforcement ===
+    # The de facto canonical form has TWO timestamps:
+    #   <run_type>_seed<N>_<TS_launch>_<TS_protenix_init>[_resume<R>_<TS>]
+    #
+    # TS_launch: stamp embedded by our chain/launch script (date -u when the
+    #            shell wrote the RUN_NAME variable)
+    # TS_protenix_init: stamp Protenix's runner/train.py:384 appends when it
+    #            finishes argparse + CUDA init and calls "Using run name: ...".
+    #            Typically TS_launch + 5-10 seconds; growing delta over time
+    #            signals image-load slowdown.
+    #
+    # SEED_CONVENTION.md shows the SINGLE-TS form (TS_launch only) as the
+    # "intended" name — that's the name our scripts CONSTRUCT. The on-disk
+    # and R2 canonical form is ALWAYS double-TS because Protenix appends one.
+    # Both timestamps are different and informative; do not collapse them.
+    #
+    # Watcher policy: warn if _seed<N>_ is missing OR if the TS pattern is
+    # broken. Never block uploads — record violations to R2 for audit.
+    # Single canonical pattern. Run name MUST start with one of two prefixes
+    # and contain _seed<N>_. After that, any sequence of _<TS> markers (each
+    # YYYYMMDD_HHMMSS) and/or _resume<R> tokens is allowed. Optional .tainted
+    # suffix is honored.
+    NAMING_REGEXES = [
+        re.compile(
+            r"^"
+            r"(idp_v2_fresh_step\d+(to\d+)?|pdb_block\d{2}_run\d+)"  # prefix
+            r"_seed\d+"                                                # seed required
+            r"(_\d{8}_\d{6}|_resume\d+)*"                              # any TS or resume markers
+            r"(\.tainted)?"                                            # optional taint flag
+            r"$"
+        ),
+    ]
+    violations_reported: set[str] = set()
+
     while True:
         # Heartbeat: written BEFORE the poll work, so even if the poll throws
         # we still recorded "watcher was alive at T". The JSON body includes
@@ -336,6 +378,36 @@ def main() -> int:
             pending = find_pending_pairs(args.runs_root, sizes_history, state,
                                          skip_stability_check=args.once)
             for model_path, ema_path, run_name, step in pending:
+                # Per-run naming check (once per run, not per checkpoint)
+                if args.enforce_naming and run_name not in violations_reported:
+                    if not any(rx.match(run_name) for rx in NAMING_REGEXES):
+                        print(f"[{time.strftime('%H:%M:%S')}] NAMING VIOLATION: "
+                              f"run_name '{run_name}' does not match "
+                              f"SEED_CONVENTION.md patterns. Uploading anyway.",
+                              flush=True)
+                        violations_reported.add(run_name)
+                        viol = {
+                            "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "run_name": run_name,
+                            "expected_patterns": [rx.pattern for rx in NAMING_REGEXES],
+                            "hostname": socket.gethostname(),
+                            "prefix_override": args.prefix_override,
+                        }
+                        viol_key_prefix = (args.prefix_override
+                                           or socket.gethostname())
+                        try:
+                            # Append to a JSONL: download existing, add line, re-upload
+                            viol_key = f"ops/{viol_key_prefix}/naming_violations.jsonl"
+                            try:
+                                existing = s3.get_object(Bucket=args.bucket, Key=viol_key)["Body"].read().decode()
+                            except Exception:
+                                existing = ""
+                            new_body = existing + json.dumps(viol) + "\n"
+                            s3.put_object(Bucket=args.bucket, Key=viol_key,
+                                          Body=new_body.encode(),
+                                          ContentType="application/x-ndjson")
+                        except Exception as e:
+                            print(f"  ! failed to record naming violation to R2: {e}", flush=True)
                 if args.prefix_override:
                     category = args.prefix_override
                 else:
