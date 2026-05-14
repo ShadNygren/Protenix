@@ -9,7 +9,12 @@ What we capture each second:
   * mem_total_mb             /proc/meminfo MemTotal
   * mem_available_mb         /proc/meminfo MemAvailable (kernel's "free + reclaimable" estimate)
   * mem_used_mb              total - available
+  * cached_mb                /proc/meminfo Cached (page cache, evictable under pressure)
+  * shmem_mb                 /proc/meminfo Shmem (tmpfs + SysV shm + anon shared mappings)
   * swap_used_mb             /proc/meminfo SwapTotal - SwapFree
+  * shm_size_mb              df /dev/shm total
+  * shm_used_mb              df /dev/shm used
+  * shm_avail_mb             df /dev/shm available
   * cgroup_limit_mb          /sys/fs/cgroup/memory.max (cgroup v2) or memory.limit_in_bytes (v1)
   * cgroup_current_mb        /sys/fs/cgroup/memory.current (v2) or memory.usage_in_bytes (v1)
   * cgroup_peak_mb           /sys/fs/cgroup/memory.peak when available (v2 kernel ≥ 5.19)
@@ -18,6 +23,14 @@ What we capture each second:
   * top3_rss_mb / top3_pid / top3_cmd   third-largest
   * train_workers_n          count of processes matching `runner/train.py` (incl. dataloader forks)
   * train_total_rss_mb       sum of RSS across those processes (most useful number)
+  * kiddie_pool_mb           train_total_rss + shmem (collision risk metric — see below)
+
+The "kiddie pool" metric: PyTorch DataLoader workers communicate prefetched
+batches to the main process via /dev/shm (tmpfs, RAM-backed). The container's
+cgroup memory cap covers BOTH process RSS AND tmpfs usage out of the same pool.
+If `train_total_rss + shmem` ever approaches `cgroup_limit`, OOM-killer fires
+even though no single value looks alarming. Tracking the sum is the right
+signal — not either operand alone.
 
 Filter for processes is configurable via --pattern (regex on /proc/<pid>/cmdline).
 Default matches Protenix training + watcher.
@@ -37,10 +50,25 @@ import argparse
 import csv
 import os
 import re
+import shutil
 import signal
 import sys
 import time
 from pathlib import Path
+
+
+def read_shm_usage() -> tuple[int | None, int | None, int | None]:
+    """Return (size_bytes, used_bytes, avail_bytes) for /dev/shm, or all None.
+
+    Uses shutil.disk_usage which calls statvfs under the hood. The tmpfs at
+    /dev/shm is RAM-backed so its "used" is real RAM committed to shared
+    memory (separate accounting from process RSS).
+    """
+    try:
+        usage = shutil.disk_usage("/dev/shm")
+        return usage.total, usage.used, usage.free
+    except (FileNotFoundError, OSError):
+        return None, None, None
 
 
 def read_meminfo() -> dict[str, int]:
@@ -152,9 +180,10 @@ def main() -> int:
     # Write CSV header
     header = [
         "t", "mem_total_mb", "mem_available_mb", "mem_used_mb",
-        "swap_used_mb",
+        "cached_mb", "shmem_mb", "swap_used_mb",
+        "shm_size_mb", "shm_used_mb", "shm_avail_mb",
         "cgroup_limit_mb", "cgroup_current_mb", "cgroup_peak_mb",
-        "train_workers_n", "train_total_rss_mb",
+        "train_workers_n", "train_total_rss_mb", "kiddie_pool_mb",
     ]
     for i in range(1, args.top_n + 1):
         header.extend([f"top{i}_rss_mb", f"top{i}_pid", f"top{i}_cmd"])
@@ -179,26 +208,39 @@ def main() -> int:
         meminfo = read_meminfo()
         mem_total_kb = meminfo.get("MemTotal", 0)
         mem_avail_kb = meminfo.get("MemAvailable", 0)
+        cached_kb = meminfo.get("Cached", 0)
+        shmem_kb = meminfo.get("Shmem", 0)
         swap_total_kb = meminfo.get("SwapTotal", 0)
         swap_free_kb = meminfo.get("SwapFree", 0)
 
+        shm_size_b, shm_used_b, shm_avail_b = read_shm_usage()
         cg_limit, cg_current, cg_peak = read_cgroup_memory()
 
         procs = read_proc_stats(pattern)
         procs.sort(key=lambda x: x[1], reverse=True)
         total_rss_kb = sum(p[1] for p in procs)
 
+        # Kiddie-pool metric: process RSS + shared memory both compete for the
+        # cgroup cap. If sum approaches cgroup_limit, OOM-killer fires.
+        kiddie_pool_kb = total_rss_kb + shmem_kb
+
         row = [
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             kb_to_mb(mem_total_kb),
             kb_to_mb(mem_avail_kb),
             kb_to_mb(mem_total_kb - mem_avail_kb),
+            kb_to_mb(cached_kb),
+            kb_to_mb(shmem_kb),
             kb_to_mb(swap_total_kb - swap_free_kb),
+            bytes_to_mb(shm_size_b),
+            bytes_to_mb(shm_used_b),
+            bytes_to_mb(shm_avail_b),
             bytes_to_mb(cg_limit),
             bytes_to_mb(cg_current),
             bytes_to_mb(cg_peak),
             len(procs),
             kb_to_mb(total_rss_kb),
+            kb_to_mb(kiddie_pool_kb),
         ]
         for i in range(args.top_n):
             if i < len(procs):

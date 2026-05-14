@@ -231,6 +231,17 @@ def main() -> int:
                          "testing nodes) where ALL output must be quarantined "
                          "in a known prefix for later cleanup. Examples: "
                          "--prefix-override salad_testing/<node-id>")
+    ap.add_argument("--heartbeat", action="store_true",
+                    help="Write a heartbeat JSON to R2 every poll cycle. "
+                         "Key derived from --prefix-override (e.g., "
+                         "ops/salad_testing/<node-id>/heartbeat.json) so a "
+                         "post-mortem session can tell when the watcher last "
+                         "ran even if the container is gone. Recommended for "
+                         "interruptible cloud nodes.")
+    ap.add_argument("--heartbeat-key", default=None,
+                    help="Override the auto-derived heartbeat key. If unset "
+                         "and --heartbeat is on, defaults to "
+                         "ops/<prefix-override or hostname>/heartbeat.json")
     args = ap.parse_args()
 
     load_env(args.env_file)
@@ -243,6 +254,22 @@ def main() -> int:
 
     state = load_state(args.state_file)
     sizes_history: dict[str, tuple[int, int]] = {}
+
+    # === Heartbeat setup ===
+    # Writing a small JSON object to R2 on every poll cycle gives a definitive
+    # "watcher was alive at T" signal that survives the container's death. If
+    # the next session sees heartbeat.json's mtime ages indefinitely, they know
+    # the watcher (and the box) died at that timestamp — not 30s before, but
+    # within poll_interval of it.
+    heartbeat_key: str | None = None
+    if args.heartbeat:
+        if args.heartbeat_key:
+            heartbeat_key = args.heartbeat_key
+        elif args.prefix_override:
+            heartbeat_key = f"ops/{args.prefix_override}/heartbeat.json"
+        else:
+            heartbeat_key = f"ops/{socket.gethostname()}/heartbeat.json"
+        print(f"[watcher] heartbeat ENABLED → s3://{args.bucket}/{heartbeat_key}", flush=True)
 
     # === Optional disk encryption after successful R2 upload ===
     # Encryption gives us a recovery copy that's safe-at-rest on the host SSD.
@@ -269,7 +296,42 @@ def main() -> int:
     else:
         print(f"[watcher] secure_checkpoint module unavailable (older image?) — no encryption", flush=True)
 
+    last_uploaded_step = max(
+        (int(k.rsplit("/", 1)[-1]) for k in state.get("uploaded", {}).keys()
+         if k.rsplit("/", 1)[-1].isdigit()),
+        default=None,
+    )
+
     while True:
+        # Heartbeat: written BEFORE the poll work, so even if the poll throws
+        # we still recorded "watcher was alive at T". The JSON body includes
+        # last-uploaded step + loadavg so an observer can correlate watcher
+        # liveness with training progress + system load.
+        if heartbeat_key:
+            try:
+                with open("/proc/loadavg") as fh:
+                    loadavg = fh.read().strip()
+            except OSError:
+                loadavg = "unavailable"
+            heartbeat = {
+                "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "watcher_pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "prefix_override": args.prefix_override,
+                "last_uploaded_step": last_uploaded_step,
+                "loadavg": loadavg,
+                "poll_interval_s": args.poll_interval,
+            }
+            try:
+                s3.put_object(
+                    Bucket=args.bucket,
+                    Key=heartbeat_key,
+                    Body=json.dumps(heartbeat, indent=2).encode(),
+                    ContentType="application/json",
+                )
+            except Exception as e:
+                print(f"[{time.strftime('%H:%M:%S')}] heartbeat write FAILED: {e}", flush=True)
+
         try:
             pending = find_pending_pairs(args.runs_root, sizes_history, state,
                                          skip_stability_check=args.once)
@@ -312,6 +374,8 @@ def main() -> int:
                     **({"encrypted": enc_result} if enc_result else {}),
                 }
                 save_state(args.state_file, state)
+                if last_uploaded_step is None or step > last_uploaded_step:
+                    last_uploaded_step = step
                 m_skip = "SKIP" if m_result.get("skipped") else f"{m_result.get('rate_mb_per_s', 0)} MB/s"
                 e_skip = "SKIP" if e_result.get("skipped") else f"{e_result.get('rate_mb_per_s', 0)} MB/s"
                 enc_note = " + encrypted local copy" if enc_result else ""

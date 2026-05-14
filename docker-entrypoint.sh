@@ -131,6 +131,38 @@ elif [ -n "$SALAD_MACHINE_ID" ]; then
     echo "[entrypoint] Salad machine: $SALAD_MACHINE_ID — open the Terminal from the Instances tab in the Salad portal"
 fi
 
+# === Optional User-Data style startup script ===
+# PROTENIX_STARTUP_SCRIPT mirrors AWS EC2 User Data: if set, its contents are
+# written to /tmp/protenix_startup.sh, made executable, and run in the
+# background (so the container keeps running for SSH access even if the script
+# exits quickly or fails).
+#
+# Use cases:
+#   - Auto-launch a training run on a fresh Salad container (no manual SSH)
+#   - Auto-launch a prediction job
+#   - Stage data from R2 before sshd accepts connections
+#   - Different workloads from the same image (training vs prediction vs eval)
+#
+# Failure handling: a non-zero exit from the user script is LOGGED but does
+# NOT crash the container — the sleep-infinity fallback below still runs so
+# SSH stays reachable for debugging. This is opposite to AWS User Data, which
+# can brick an instance on a bad script; we explicitly trade off that
+# strictness for keeping SSH access alive on a remote cloud GPU.
+if [ -n "$PROTENIX_STARTUP_SCRIPT" ]; then
+    USER_DATA_PATH=/tmp/protenix_startup.sh
+    USER_DATA_LOG=/tmp/protenix_startup.log
+    printf '%s\n' "$PROTENIX_STARTUP_SCRIPT" > "$USER_DATA_PATH"
+    chmod +x "$USER_DATA_PATH"
+    echo "[entrypoint] PROTENIX_STARTUP_SCRIPT received ($(wc -c < "$USER_DATA_PATH") bytes) → $USER_DATA_PATH"
+    echo "[entrypoint] running startup script in background (log: $USER_DATA_LOG)"
+    # setsid so the script has its own session and won't be killed when the
+    # entrypoint's bash exits/replaces itself with sleep infinity. nohup +
+    # </dev/null + disown so it survives if anything tries to HUP us.
+    setsid nohup bash "$USER_DATA_PATH" </dev/null >"$USER_DATA_LOG" 2>&1 &
+    disown $! 2>/dev/null || true
+    echo "[entrypoint] startup script pid: $! (use 'tail -f $USER_DATA_LOG' to follow)"
+fi
+
 # === Decide what to run ===
 # 1. Explicit non-trivial command via `docker run image <args>` → run it
 # 2. No command (or trivial bash-only CMD) + interactive TTY → drop into bash
