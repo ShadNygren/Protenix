@@ -212,6 +212,96 @@ def save_state(state_path: Path, state: dict) -> None:
     tmp.replace(state_path)
 
 
+def _get_cpu_steal_pct() -> float:
+    """Read cumulative CPU steal % from /proc/stat."""
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("cpu "):
+                    fields = line.split()
+                    if len(fields) >= 9:
+                        steal = int(fields[8])
+                        total = sum(int(x) for x in fields[1:])
+                        return steal / total * 100 if total > 0 else 0.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _get_recent_step_rates(run_dir: Path, last_n: int = 50) -> list[float]:
+    """Extract recent step rates from training.log tqdm output."""
+    log_path = run_dir / "training.log"
+    if not log_path.exists():
+        return []
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 50000))
+            tail = f.read().decode("utf-8", errors="ignore")
+        rates = [float(m) for m in re.findall(r"(\d+\.\d+)s/it\]", tail)]
+        return rates[-last_n:] if rates else []
+    except Exception:
+        return []
+
+
+def _assess_host_quality(
+    upload_rate_mbps: float,
+    run_dir: Path,
+    step: int,
+) -> tuple[bool, str]:
+    """Assess whether this host should continue training.
+
+    Called after every successful checkpoint upload to R2. The checkpoint
+    is safe on R2 at this point, so aborting is safe — we can resume from
+    this exact step on a new host.
+
+    Returns (should_abort, reason).
+
+    Configurable via environment:
+      WATCHER_MIN_UPLOAD_MBPS: minimum upload speed (default: 5)
+      WATCHER_MAX_STEP_RATE: maximum acceptable sec/step (default: 20)
+      WATCHER_MAX_STEAL_PCT: maximum CPU steal % (default: 15)
+      WATCHER_BASELINE_STEP_RATE: expected step rate on good host (default: 7.0)
+      WATCHER_DEGRADATION_RATIO: abort if current/baseline > this (default: 2.5)
+    """
+    min_upload = float(os.environ.get("WATCHER_MIN_UPLOAD_MBPS", "5"))
+    max_step_rate = float(os.environ.get("WATCHER_MAX_STEP_RATE", "20"))
+    max_steal = float(os.environ.get("WATCHER_MAX_STEAL_PCT", "15"))
+    baseline_rate = float(os.environ.get("WATCHER_BASELINE_STEP_RATE", "7.0"))
+    max_ratio = float(os.environ.get("WATCHER_DEGRADATION_RATIO", "2.5"))
+
+    reasons = []
+
+    # Check 1: Upload bandwidth too low (indicates poor network)
+    if upload_rate_mbps > 0 and upload_rate_mbps < min_upload:
+        reasons.append(f"upload_bandwidth={upload_rate_mbps:.1f} MB/s < {min_upload} MB/s threshold")
+
+    # Check 2: Recent step rate degraded
+    recent_rates = _get_recent_step_rates(run_dir, last_n=50)
+    if recent_rates:
+        median_rate = sorted(recent_rates)[len(recent_rates) // 2]
+        if median_rate > max_step_rate:
+            reasons.append(f"step_rate={median_rate:.1f}s > {max_step_rate}s absolute max")
+        elif baseline_rate > 0 and median_rate / baseline_rate > max_ratio:
+            reasons.append(f"step_rate={median_rate:.1f}s is {median_rate/baseline_rate:.1f}x baseline ({baseline_rate}s)")
+
+    # Check 3: CPU steal time (host owner's workload competing)
+    steal_pct = _get_cpu_steal_pct()
+    if steal_pct > max_steal:
+        reasons.append(f"cpu_steal={steal_pct:.1f}% > {max_steal}% (host owner active)")
+
+    # Decision: abort only if multiple signals agree, or one is extreme
+    if len(reasons) >= 2:
+        return True, " + ".join(reasons)
+    elif reasons and ("absolute max" in reasons[0] or steal_pct > 30):
+        return True, reasons[0]
+    else:
+        if reasons:
+            print(f"  [quality] warning (not aborting): {reasons[0]}", flush=True)
+        return False, ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env-file", type=Path, default=Path("/data/.env.cloudflare"))
@@ -452,6 +542,47 @@ def main() -> int:
                 e_skip = "SKIP" if e_result.get("skipped") else f"{e_result.get('rate_mb_per_s', 0)} MB/s"
                 enc_note = " + encrypted local copy" if enc_result else ""
                 print(f"  ✓ {step}.pt {m_skip}, {step}_ema {e_skip}{enc_note}", flush=True)
+
+                # === Post-checkpoint host quality assessment ===
+                # Now that the checkpoint is safely on R2, assess whether this
+                # host is still performing well enough to continue training.
+                # Signals: upload bandwidth, step rate trend, CPU steal time.
+                # If the host is degraded, abort so the platform reallocates.
+                if not args.once and os.environ.get("WATCHER_QUALITY_CHECK", "true").lower() == "true":
+                    try:
+                        should_abort, abort_reason = _assess_host_quality(
+                            upload_rate_mbps=m_result.get("rate_mb_per_s", 0),
+                            run_dir=model_path.parent.parent,
+                            step=step,
+                        )
+                        if should_abort:
+                            print(f"[{time.strftime('%H:%M:%S')}] HOST QUALITY DEGRADED after "
+                                  f"checkpoint {step} upload confirmed on R2.", flush=True)
+                            print(f"  Reason: {abort_reason}", flush=True)
+                            print(f"  Action: exiting to trigger platform reallocation.", flush=True)
+                            print(f"  Resume: next container loads {step}.pt from R2 automatically.", flush=True)
+                            # Log the abort decision to R2
+                            abort_record = {
+                                "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "hostname": socket.gethostname(),
+                                "last_step": step,
+                                "reason": abort_reason,
+                                "run_name": run_name,
+                            }
+                            abort_key_prefix = args.prefix_override or socket.gethostname()
+                            try:
+                                s3.put_object(
+                                    Bucket=args.bucket,
+                                    Key=f"ops/{abort_key_prefix}/host_abort_{step}.json",
+                                    Body=json.dumps(abort_record, indent=2).encode(),
+                                    ContentType="application/json",
+                                )
+                            except Exception:
+                                pass
+                            sys.exit(1)
+                    except Exception as e:
+                        print(f"  ! quality check error (non-fatal): {e}", flush=True)
+
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] ERROR: {e}", flush=True)
 
