@@ -131,6 +131,22 @@ elif [ -n "$SALAD_MACHINE_ID" ]; then
     echo "[entrypoint] Salad machine: $SALAD_MACHINE_ID — open the Terminal from the Instances tab in the Salad portal"
 fi
 
+# === Host Quality Gate (Salad/residential GPU networks) ===
+# Detects unsuitable hosts (WSL2, locked CPU clocks, weak hardware) and exits
+# immediately to trigger platform reallocation BEFORE downloading data.
+# Every attempt (pass or fail) is logged to R2 for host quality statistics.
+# Skip with GATE_SKIP=1 for debugging or on known-good platforms (RunPod).
+if [ "${GATE_SKIP:-0}" != "1" ] && [ -r /opt/protenix-tools/host_quality_gate.sh ]; then
+    echo "[entrypoint] running host quality gate..."
+    if ! bash /opt/protenix-tools/host_quality_gate.sh; then
+        echo "[entrypoint] HOST REJECTED — exiting for reallocation"
+        # Brief sleep so rejection log can upload to R2
+        sleep 3
+        exit 1
+    fi
+    echo "[entrypoint] host quality gate: PASSED"
+fi
+
 # === Optional User-Data style startup script ===
 # PROTENIX_STARTUP_SCRIPT mirrors AWS EC2 User Data: if set, its contents are
 # written to /tmp/protenix_startup.sh, made executable, and run in the
