@@ -17,6 +17,8 @@ TRAIN_CSV="${7:?train_csv required}"
 TRAIN_PDB="${8:?train_pdb_list required}"
 
 NUM_DL_WORKERS="${NUM_DL_WORKERS:-2}"
+LOAD_PARAMS_ONLY="${LOAD_PARAMS_ONLY:-false}"
+SKIP_LOAD_STEP="${SKIP_LOAD_STEP:-false}"
 
 OUTPUT_DIR="/data/training_output/${RUN_NAME}"
 mkdir -p "$OUTPUT_DIR"
@@ -37,9 +39,10 @@ cd /workspace && \
         --base_dir /data/training_output \
         --load_checkpoint_path "$PREV_CKPT" \
         --load_ema_checkpoint_path "$PREV_EMA" \
-        --load_params_only false \
+        --load_params_only "$LOAD_PARAMS_ONLY" \
         --skip_load_optimizer true \
         --skip_load_scheduler true \
+        --skip_load_step "$SKIP_LOAD_STEP" \
         --max_steps "$MAX_STEPS" \
         --checkpoint_interval 500 \
         --log_interval 10 \

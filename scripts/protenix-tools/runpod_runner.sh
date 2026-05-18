@@ -110,62 +110,76 @@ else
 fi
 
 # ---- Phase 3: Fix eval placeholders ----
-# Protenix crashes if eval CSVs are empty even with eval disabled.
-# We populate them with a single row after bioassemblies are staged.
+# Protenix crashes if eval CSVs are empty even with eval disabled — it builds
+# eval datasets at init regardless of eval_interval/eval_first settings.
+# The eval CSV rows must pass find_eval_chain_interface filtering, so we use
+# REAL rows from the training CSV (not synthetic data).
 fix_eval_placeholders() {
     local bio_dir="$1"
-    log "  Fixing eval placeholders from $bio_dir"
+    local train_csv="$2"
+    log "  Fixing eval placeholders from $train_csv + $bio_dir"
 
-    # Find one valid PDB from the bioassembly dir
-    local sample_pkl
-    sample_pkl=$(find "$bio_dir" -maxdepth 1 -name '*.pkl.gz' -print -quit)
-    if [ -z "$sample_pkl" ]; then
-        log "  WARNING: No bioassembly files found, skipping eval placeholder fix"
-        return
-    fi
-    local pdb_id
-    pdb_id=$(basename "$sample_pkl" .pkl.gz)
-    log "  Using sample PDB: $pdb_id"
-
-    # Write a minimal eval CSV with one valid row
-    local eval_csv="/root/indices/recentPDB_low_homology_maxtoken1536.csv"
     python3 -c "
-import gzip, pickle, csv, sys
+import csv, os, sys, shutil
 
-pkl_path = '$sample_pkl'
-pdb_id = '$pdb_id'
+train_csv = '$train_csv'
+bio_dir = '$bio_dir'
+eval_csv_1 = '/root/indices/recentPDB_low_homology_maxtoken1536.csv'
+eval_csv_2 = '/root/indices/posebusters_indices_mainchain_interface.csv'
+pdb_list = '/root/indices/recentPDB_low_homology_maxtoken1024_sample384_pdb_id.txt'
+bio_dict_dir = '/root/common/bioassembly_dict'
 
-# Read the bioassembly to get valid chain/entity info
-try:
-    with gzip.open(pkl_path, 'rb') as f:
-        bio = pickle.load(f)
-    # Write a minimal valid CSV row
-    row = {
-        'entity_1_id': '1', 'chain_1_id': 'A', 'mol_1_type': 'prot',
-        'cluster_1_id': '1', 'entity_2_id': '2', 'chain_2_id': 'B',
-        'mol_2_type': 'prot', 'cluster_2_id': '2', 'cluster_id': '1',
-        'pdb_id': pdb_id, 'assembly_id': '1', 'release_date': '2020-01-01',
-        'num_tokens': '100', 'num_prot_chains': '2', 'resolution': '2.0',
-        'type': 'prot-prot', 'mol_type_group': 'prot-prot',
-        'sub_mol_1_type': 'prot', 'sub_mol_2_type': 'prot',
-        'eval_type': 'low_homology',
-    }
-    with open('$eval_csv', 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=list(row.keys()), quoting=csv.QUOTE_ALL)
+os.makedirs(bio_dict_dir, exist_ok=True)
+
+# Read training CSV and find rows with eval_type in EvaluationChainInterface
+# The 'type' column has 'interface'/'chain'; the eval filter uses 'eval_type'
+EVAL_CHAIN_INTERFACE = {
+    'intra_ligand', 'intra_dna', 'intra_rna', 'intra_prot',
+    'ligand_prot', 'rna_prot', 'dna_prot', 'prot_prot',
+    'antibody_antigen', 'antibody',
+}
+with open(train_csv) as f:
+    reader = csv.DictReader(f)
+    fieldnames = reader.fieldnames
+    candidates = []
+    seen_pdbs = set()
+    for row in reader:
+        et = row.get('eval_type', '')
+        pdb_id = row.get('pdb_id', '')
+        if et in EVAL_CHAIN_INTERFACE and pdb_id and pdb_id not in seen_pdbs:
+            bio_path = os.path.join(bio_dir, f'{pdb_id}.pkl.gz')
+            if os.path.exists(bio_path):
+                candidates.append((row, pdb_id, bio_path))
+                seen_pdbs.add(pdb_id)
+                if len(candidates) >= 3:
+                    break
+
+if not candidates:
+    print('  WARNING: No valid eval candidates found in training CSV', file=sys.stderr)
+    sys.exit(0)
+
+# Write eval CSVs with real rows
+pdb_ids = []
+for eval_csv in [eval_csv_1, eval_csv_2]:
+    with open(eval_csv, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
         w.writeheader()
-        w.writerow(row)
-    print(f'  eval CSV written: $eval_csv')
-except Exception as e:
-    print(f'  WARNING: Could not create eval CSV: {e}', file=sys.stderr)
+        for row, pdb_id, bio_path in candidates:
+            w.writerow(row)
+            if pdb_id not in pdb_ids:
+                pdb_ids.append(pdb_id)
+                # Symlink bioassembly so eval dataset can find it
+                dest = os.path.join(bio_dict_dir, f'{pdb_id}.pkl.gz')
+                if not os.path.exists(dest):
+                    os.symlink(bio_path, dest)
+
+# Write PDB ID list for eval
+with open(pdb_list, 'w') as f:
+    for pdb_id in pdb_ids:
+        f.write(pdb_id + '\n')
+
+print(f'  Eval CSVs written with {len(candidates)} rows (eval_types pass filter): {pdb_ids}')
 " 2>&1
-
-    # Copy to the other eval CSV
-    cp "$eval_csv" /root/indices/posebusters_indices_mainchain_interface.csv 2>/dev/null || true
-
-    # Create eval bioassembly symlink
-    mkdir -p /root/common/bioassembly_dict
-    ln -sf "$sample_pkl" "/root/common/bioassembly_dict/${pdb_id}.pkl.gz" 2>/dev/null || true
-    echo "$pdb_id" > /root/indices/recentPDB_low_homology_maxtoken1024_sample384_pdb_id.txt
 }
 
 # ---- Phase 4: Telemetry uploader ----
@@ -314,7 +328,18 @@ execute_single_run() {
     fi
 
     # Fix eval placeholders (only needed once, but idempotent)
-    fix_eval_placeholders "$bio_dir"
+    fix_eval_placeholders "$bio_dir" "$train_csv"
+
+    # Detect base-model checkpoint (weights-only, no step/optimizer)
+    local is_base_model="false"
+    if python3 -c "
+import torch, sys
+ckpt = torch.load('$prev_ckpt', map_location='cpu', weights_only=False)
+sys.exit(0 if 'step' not in ckpt else 1)
+" 2>/dev/null; then
+        is_base_model="true"
+        log "  Detected base-model checkpoint (no step key) — using load_params_only=true"
+    fi
 
     # Export vars for run_salad_training.sh
     export PREV_CKPT="$prev_ckpt"
@@ -330,6 +355,8 @@ execute_single_run() {
     export LOG_DIR="$LOG_DIR"
     export CONTAINER_ID="$POD_ID"
     export R2_PREFIX="runpod/${POD_ID}"
+    export LOAD_PARAMS_ONLY="$is_base_model"
+    export SKIP_LOAD_STEP="$is_base_model"
 
     # Launch training with all monitors
     log "  Launching training..."
@@ -346,6 +373,11 @@ execute_single_run() {
     wait_start=$(date +%s)
     local max_wait=172800  # 48 hours max per run
 
+    # Grace period: train.py takes 30-90s to start (data loading, model init).
+    # pgrep before then would falsely conclude the process exited.
+    log "  Waiting 60s for train.py to initialize..."
+    sleep 60
+
     while true; do
         local elapsed=$(( $(date +%s) - wait_start ))
         if [ "$elapsed" -gt "$max_wait" ]; then
@@ -355,11 +387,21 @@ execute_single_run() {
 
         # Check if training process is still running
         if ! pgrep -f "runner/train.py.*--run_name $run_name" >/dev/null 2>&1; then
-            # Process exited — check if it completed successfully
-            if [ -f "$train_log" ] && grep -q "END $run_name" "$train_log" 2>/dev/null; then
-                log "  Training completed successfully"
+            # Process exited — check if it completed successfully.
+            # Training log formats:
+            #   Progress bar: "[step 62: 62/9999]"
+            #   Metrics:      "Step 9 train metrics: {...'loss.avg':...}"
+            if [ -f "$train_log" ] && grep -qiP '[Ss]tep\s+\d+\s+train\s+metrics' "$train_log" 2>/dev/null; then
+                local final_step
+                final_step=$(grep -oiP '[Ss]tep\s+\K\d+(?=\s+train\s+metrics)' "$train_log" 2>/dev/null | tail -1)
+                log "  Training completed (final step: ${final_step:-?})"
+            elif [ -f "$train_log" ] && grep -qi 'error\|traceback\|exception' "$train_log" 2>/dev/null; then
+                log "  ERROR: Training crashed. Last 5 lines of log:"
+                tail -5 "$train_log" 2>/dev/null | while IFS= read -r l; do log "    $l"; done
+                return 1
             else
-                log "  Training process exited (check log for errors)"
+                log "  Training process exited with no step output (check log)"
+                return 1
             fi
             break
         fi
@@ -368,7 +410,7 @@ execute_single_run() {
         if [ $((elapsed % 300)) -lt 30 ]; then
             local last_step=""
             if [ -f "$train_log" ]; then
-                last_step=$(grep -oP 'step\s*[:=]\s*\K\d+' "$train_log" 2>/dev/null | tail -1)
+                last_step=$(grep -oP '\[step \K\d+' "$train_log" 2>/dev/null | tail -1)
             fi
             log "  Still training... elapsed=${elapsed}s step=${last_step:-?}/${max_steps}"
             upload_telemetry_once "training run $run_idx/$total_runs step=${last_step:-?}"
