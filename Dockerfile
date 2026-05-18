@@ -366,6 +366,13 @@ RUN touch /root/indices/recentPDB_low_homology_maxtoken1024_sample384_pdb_id.txt
 #   auto_stage_and_train.sh    — unified startup: calls stage_training_data.py
 #                              then run_salad_training.sh. Set as
 #                              PROTENIX_STARTUP_SCRIPT for auto-launch.
+#   runpod_runner.sh           — fully autonomous training runner. Launched
+#                              by runpod_grabber.py on the laptop; handles
+#                              creds, staging, eval placeholders, training,
+#                              telemetry upload — zero human interaction.
+#   runpod_grabber.py          — laptop-side script: polls RunPod API until
+#                              a GPU pod is available, then auto-deploys
+#                              creds + runner. Not used inside container.
 # ============================================================================
 COPY scripts/protenix-tools/ /opt/protenix-tools/
 RUN chmod +x /opt/protenix-tools/*.py /opt/protenix-tools/*.sh

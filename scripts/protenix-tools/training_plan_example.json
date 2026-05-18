@@ -1,0 +1,12 @@
+[
+  {
+    "run_name": "idp_fold1_from_base",
+    "checkpoint_uri": "r2://vh-protenix-training/base_model/protenix_base_20250630_v1.0.0.pt",
+    "ema_uri": "",
+    "bioassembly_uri": "r2://vh-pdb-structures/bioassembly_crop384/idp_set.zip",
+    "indices_uri": "r2://vh-protenix-training/data/idp_v2/train_fold1.csv",
+    "pdb_list_uri": "r2://vh-protenix-training/data/idp_v2/train_all_pdb_ids.txt",
+    "max_steps": 4999,
+    "seed": 71
+  }
+]
