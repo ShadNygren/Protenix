@@ -358,6 +358,14 @@ RUN touch /root/indices/recentPDB_low_homology_maxtoken1024_sample384_pdb_id.txt
 #   archive_discarded_artifacts.py — archive flawed/abandoned experimental
 #                              artifacts to a separate S3 prefix with
 #                              sha256+md5 metadata + WHY_ARCHIVED.md note.
+#   stage_training_data.py     — downloads checkpoint + bioassembly ZIP +
+#                              indices from R2/S3 to local staging dir.
+#                              URI scheme (r2:// vs s3://) routes to the
+#                              correct storage backend. Core of the
+#                              lightweight "devel" image workflow.
+#   auto_stage_and_train.sh    — unified startup: calls stage_training_data.py
+#                              then run_salad_training.sh. Set as
+#                              PROTENIX_STARTUP_SCRIPT for auto-launch.
 # ============================================================================
 COPY scripts/protenix-tools/ /opt/protenix-tools/
 RUN chmod +x /opt/protenix-tools/*.py /opt/protenix-tools/*.sh

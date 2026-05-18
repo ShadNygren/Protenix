@@ -22,20 +22,24 @@ jobs:
       max-parallel: 2  # Limit parallel builds to avoid disk space issues
       matrix:
         include:
-          # Only building devel-with-weights for now (the one we use on RunPod)
-          # Uncomment others when needed:
+          # Lightweight image: no baked-in weights, pulls checkpoint from R2 at
+          # startup via stage_training_data.py. Faster cold-start, smaller image.
+          # Use for training (always resumes from an R2 checkpoint anyway).
+          - variant: devel
+            weights: false
+            suffix: "-devel"
+          # Full image: baked-in base model weights for inference/prediction
+          # without needing R2 access. Larger image (~4 GB heavier).
+          - variant: devel
+            weights: true
+            suffix: "-devel-with-weights"
+          # Uncomment when needed:
           # - variant: runtime
           #   weights: false
           #   suffix: ""
           # - variant: runtime
           #   weights: true
           #   suffix: "-with-weights"
-          # - variant: devel
-          #   weights: false
-          #   suffix: "-devel"
-          - variant: devel
-            weights: true
-            suffix: "-devel-with-weights"
     permissions:
       contents: read
       packages: write
