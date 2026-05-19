@@ -339,7 +339,7 @@ class AF3Trainer(object):
                     self.optimizer.load_state_dict(checkpoint["optimizer"])
                 if not skip_load_step:
                     self.print("Loading checkpoint step")
-                    self.step = checkpoint["step"] + 1
+                    self.step = checkpoint["step"]
                     self.start_step = self.step
                     self.global_step = self.step * self.iters_to_accumulate
                 if not skip_load_scheduler:
@@ -671,28 +671,32 @@ class AF3Trainer(object):
         while True:
             for batch in self.train_dl:
                 is_update_step = (self.global_step + 1) % self.iters_to_accumulate == 0
-                is_last_step = (self.step + 1) == self.configs.max_steps
-                step_need_log = (self.step + 1) % self.configs.log_interval == 0
-
-                step_need_eval = (
-                    self.configs.eval_interval > 0
-                    and (self.step + 1) % self.configs.eval_interval == 0
-                )
-                step_need_save = (
-                    self.configs.checkpoint_interval > 0
-                    and (self.step + 1) % self.configs.checkpoint_interval == 0
-                )
-
-                is_last_step &= is_update_step
-                step_need_log &= is_update_step
-                step_need_eval &= is_update_step
-                step_need_save &= is_update_step
 
                 batch = to_device(batch, self.device)
                 self.progress_bar()
                 self.train_step(batch)
                 if use_ema and is_update_step:
                     self.ema_wrapper.update()
+
+                self.global_step += 1
+                if self.global_step % self.iters_to_accumulate == 0:
+                    self.step += 1
+
+                is_last_step = self.step == self.configs.max_steps
+                step_need_log = self.step % self.configs.log_interval == 0
+                step_need_eval = (
+                    self.configs.eval_interval > 0
+                    and self.step % self.configs.eval_interval == 0
+                )
+                step_need_save = (
+                    self.configs.checkpoint_interval > 0
+                    and self.step % self.configs.checkpoint_interval == 0
+                )
+
+                is_last_step &= is_update_step
+                step_need_log &= is_update_step
+                step_need_eval &= is_update_step
+                step_need_save &= is_update_step
 
                 if step_need_log or is_last_step:
                     metrics = self.train_metric_wrapper.calc()
@@ -719,10 +723,6 @@ class AF3Trainer(object):
 
                 if step_need_eval or is_last_step:
                     self.evaluate()
-
-                self.global_step += 1
-                if self.global_step % self.iters_to_accumulate == 0:
-                    self.step += 1
 
                 if self.step >= self.configs.max_steps:
                     self.print(f"Finished training after {self.step} steps")
