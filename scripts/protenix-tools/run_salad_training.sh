@@ -9,6 +9,7 @@
 #   4. checkpoint_watcher.py        — uploads checkpoints + heartbeat to R2
 #   5. launch_training.sh           — actual train.py run (foreground in
 #                                     a setsid-detached session)
+#   6. training_monitor.py          — OHLC aggregation of per-step loss metrics
 #
 # Every long-running process is started with setsid + nohup + disown so a
 # dropped SSH connection does NOT take down the run. Stdout of each is captured
@@ -28,16 +29,18 @@ set -u
 RUN_NAME="${RUN_NAME:-instrumented_v22_$(date -u +%Y%m%dT%H%M%SZ)}"
 PREV_CKPT="${PREV_CKPT:-/workspace/training_output/_seed/14998.pt}"
 PREV_EMA="${PREV_EMA:-/workspace/training_output/_seed/14998_ema_0.999.pt}"
-MAX_STEPS="${MAX_STEPS:-19999}"
-SEED="${SEED:-71}"  # original seed for IDP-v2 fold1 was 71 per SEED_CONVENTION.md
+MAX_STEPS="${MAX_STEPS:-5000}"
+SEED="${SEED:-0}"  # use select_next_training_run.py to determine correct seed
 NUM_WORKERS="${NUM_WORKERS:-2}"
 BIO_DIR="${BIO_DIR:-/workspace/training_data/idp_v2/bioassembly}"
 TRAIN_CSV="${TRAIN_CSV:-/workspace/training_data/idp_v2/indices/train_fold1.csv}"
 TRAIN_PDB="${TRAIN_PDB:-/workspace/training_data/idp_v2/indices/train_all_pdb_ids.txt}"
 CONTAINER_ID="${CONTAINER_ID:-$(hostname)}"
-R2_PREFIX="${R2_PREFIX:-salad_testing/${CONTAINER_ID}}"
+R2_PREFIX="${R2_PREFIX:-uhrf1_stella_20260519}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-/workspace/scripts}"
 LOG_DIR="${LOG_DIR:-/data}"
+
+OHLC_CSV="$LOG_DIR/training_ohlc.csv"
 
 mkdir -p "$LOG_DIR" "$LOG_DIR/training_logs" "$LOG_DIR/training_output"
 
@@ -56,7 +59,7 @@ for f in "$PREV_CKPT" "$PREV_EMA" "$BIO_DIR" "$TRAIN_CSV" "$TRAIN_PDB"; do
         exit 2
     fi
 done
-for s in ram_monitor.py vram_monitor.sh checkpoint_watcher.py sidecar_log_mirror.sh launch_training.sh; do
+for s in ram_monitor.py vram_monitor.sh checkpoint_watcher.py sidecar_log_mirror.sh launch_training.sh training_monitor.py; do
     if [ ! -f "$SCRIPTS_DIR/$s" ]; then
         echo "[run] required script missing: $SCRIPTS_DIR/$s" >&2
         exit 2
@@ -107,6 +110,8 @@ setsid nohup bash "$SCRIPTS_DIR/sidecar_log_mirror.sh" \
     --add "$LOG_DIR/checkpoint_watcher.log" \
     --add "$LOG_DIR/ram_monitor.stdout" \
     --add "$LOG_DIR/vram_monitor.stdout" \
+    --add "$OHLC_CSV" \
+    --add "$LOG_DIR/training_monitor.stdout" \
     </dev/null >"$LOG_DIR/sidecar.log" 2>&1 &
 SIDECAR_PID=$!
 disown $SIDECAR_PID 2>/dev/null || true
@@ -149,6 +154,19 @@ TRAIN_PID=$!
 disown $TRAIN_PID 2>/dev/null || true
 echo "[run]   pid=$TRAIN_PID"
 
+# 6. training_monitor.py — OHLC aggregation of per-step loss from training log
+TRAINING_LOG="$LOG_DIR/training_output/$RUN_NAME/training.log"
+echo "[run] starting training_monitor → $OHLC_CSV"
+echo "[run]   watching: $TRAINING_LOG"
+setsid nohup python3 "$SCRIPTS_DIR/training_monitor.py" \
+    --log "$TRAINING_LOG" \
+    --out "$OHLC_CSV" \
+    --poll-interval 5 \
+    </dev/null >"$LOG_DIR/training_monitor.stdout" 2>&1 &
+MONITOR_PID=$!
+disown $MONITOR_PID 2>/dev/null || true
+echo "[run]   pid=$MONITOR_PID"
+
 # Write a manifest so post-mortem can find every PID we started
 cat > "$LOG_DIR/run_manifest.json" <<EOF
 {
@@ -161,7 +179,8 @@ cat > "$LOG_DIR/run_manifest.json" <<EOF
     "vram_monitor": $VRAM_PID,
     "sidecar_log_mirror": $SIDECAR_PID,
     "checkpoint_watcher": $WATCHER_PID,
-    "training_wrapper": $TRAIN_PID
+    "training_wrapper": $TRAIN_PID,
+    "training_monitor": $MONITOR_PID
   },
   "config": {
     "max_steps": $MAX_STEPS,
@@ -176,9 +195,10 @@ EOF
 echo "[run] manifest: $LOG_DIR/run_manifest.json"
 
 echo "================================================================"
-echo "[run] all 5 processes launched. Watch with:"
+echo "[run] all 6 processes launched. Watch with:"
 echo "  tail -f $LOG_DIR/training_output/$RUN_NAME/training.log"
 echo "  tail -f $LOG_DIR/checkpoint_watcher.log"
+echo "  tail -f $OHLC_CSV"
 echo "  tail -f $RAM_CSV"
 echo "  ps -ef | grep -E 'train|watcher|monitor|sidecar'"
 echo "[run] R2 heartbeat: s3://vh-protenix-training/ops/$R2_PREFIX/heartbeat.json"
