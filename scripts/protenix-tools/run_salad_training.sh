@@ -35,7 +35,7 @@ BIO_DIR="${BIO_DIR:-/workspace/training_data/idp_v2/bioassembly}"
 TRAIN_CSV="${TRAIN_CSV:-/workspace/training_data/idp_v2/indices/train_fold1.csv}"
 TRAIN_PDB="${TRAIN_PDB:-/workspace/training_data/idp_v2/indices/train_all_pdb_ids.txt}"
 CONTAINER_ID="${CONTAINER_ID:-$(hostname)}"
-R2_PREFIX="salad_testing/${CONTAINER_ID}"
+R2_PREFIX="${R2_PREFIX:-salad_testing/${CONTAINER_ID}}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-/workspace/scripts}"
 LOG_DIR="${LOG_DIR:-/data}"
 

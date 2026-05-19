@@ -60,6 +60,8 @@ def load_env(env_file: Path) -> None:
         for line in f:
             line = line.strip()
             if line and "=" in line and not line.startswith("#"):
+                if line.startswith("export "):
+                    line = line[7:]
                 k, v = line.split("=", 1)
                 os.environ[k.strip()] = v.strip().strip('"').strip("'")
 
@@ -102,13 +104,25 @@ def categorize(run_name: str) -> str:
     Runs with self.step starting <50000 (the IDP-only era through step 49998)
     go to idp_only/. Everything else (interleaved era from step 50000 onwards)
     goes to interleaved/.
+
+    Recognized naming patterns:
+      - step<N>to<M>  (legacy chain format)
+      - idp_fold*     (IDP-only runs, always idp_only)
+      - pdb_block*    (general PDB runs, always interleaved)
+      - step<N>_seed* (target-step format: N is the target, run starts at N-5000)
     """
     if run_name.startswith("pdb_block"):
         return "interleaved"
+    if run_name.startswith("idp_fold"):
+        return "idp_only"
     m = re.search(r"step(\d+)to", run_name)
     if m:
         start = int(m.group(1))
         return "interleaved" if start >= 50000 else "idp_only"
+    m = re.search(r"step(\d+)_seed", run_name)
+    if m:
+        target = int(m.group(1))
+        return "interleaved" if target >= 50000 else "idp_only"
     return "interleaved"
 
 
