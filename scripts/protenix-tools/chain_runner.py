@@ -11,11 +11,12 @@ Data management:
     after the run completes and checkpoint is confirmed on R2
   - If IDP data is missing on startup, downloads from R2 automatically
 
-Companion process management:
+Companion process management (ALL mandatory — training cannot start without them):
   - training_monitor.py is restarted between runs (watches per-run stdout)
   - sidecar_log_mirror.sh is restarted between runs (updated file list)
+  - checkpoint_watcher.py is persistent (started once, runs across all runs)
   - Health checks every 60s restart any crashed companions
-  - ram_monitor, vram_monitor, checkpoint_watcher are persistent (external)
+  - ram_monitor, vram_monitor are persistent (external, optional)
 
 All run-selection logic is delegated to select_next_training_run.py.
 This script manages process lifecycle, data staging, and chaining.
@@ -35,8 +36,11 @@ Usage:
 """
 from __future__ import annotations
 
+VERSION = "2.3.0-20260529"
+
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -49,10 +53,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO
 
+
+def _file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+def print_version_banner() -> None:
+    me = __file__
+    sha = _file_sha256(me)
+    print(f"=" * 72, flush=True)
+    print(f"  chain_runner.py  v{VERSION}  sha256:{sha}", flush=True)
+    print(f"  Started: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}", flush=True)
+    print(f"  File: {me}", flush=True)
+    print(f"=" * 72, flush=True)
+
 sys.path.insert(0, str(Path(__file__).parent))
 from select_next_training_run import (
     build_full_schedule,
     find_latest_boundary_checkpoint,
+    _recover_boundary_from_r2,
     get_completed_run_count,
     get_data_paths,
     get_pdb_block_r2_uris,
@@ -80,10 +103,26 @@ CHAIN_LOG_DEFAULT = Path("/data/chain_runner.jsonl")
 WATCHER_STATE_DEFAULT = Path("/data/checkpoint_watcher_state.json")
 MONITOR_JSONL_DEFAULT = Path("/data/training_monitor.jsonl")
 DEFAULT_CREDS_FILE = Path("/dev/shm/secure/creds")
+LOCK_FILE = Path("/data/chain_runner.lock")
 
 SCRIPTS_DIR = Path(__file__).parent
 SIDECAR_INTERVAL = 60
 HEALTH_CHECK_INTERVAL = 60
+OHLC_STALE_THRESHOLD = 180  # seconds — kill training if OHLC heartbeat older than this
+OHLC_STALE_GRACE_STEPS = 50  # don't check OHLC freshness until training has produced this many steps
+TRAINING_STDOUT_STALENESS = 120  # seconds — used in multiple places
+
+# SIGTERM flag for graceful shutdown (pod restarts, preemption)
+_SIGTERM_RECEIVED = False
+
+
+def _handle_sigterm(signum, frame):
+    global _SIGTERM_RECEIVED
+    _SIGTERM_RECEIVED = True
+    print(f"\n  SIGTERM received — initiating graceful shutdown...", flush=True)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 class BlockSkipped(Exception):
@@ -123,28 +162,40 @@ def _print_event(event: dict) -> None:
 
 def find_boundary_checkpoint(run_info: dict, training_output: str) -> str | None:
     expected_step = run_info["checkpoint_step"]
-    pattern = os.path.join(training_output, f"*/checkpoints/{expected_step}.pt")
-    matches = glob.glob(pattern)
-    return matches[0] if matches else None
+    # Check both .pt and .pt.age (encrypted by checkpoint_watcher)
+    for ext in [".pt", ".pt.age"]:
+        pattern = os.path.join(training_output,
+                               f"*/checkpoints/{expected_step}{ext}")
+        matches = glob.glob(pattern)
+        if matches:
+            return matches[0]
+    return None
 
 
 def find_intermediate_checkpoints(run_info: dict, training_output: str,
                                    prev_boundary: int | None) -> list[tuple[int, str]]:
     target = run_info["checkpoint_step"]
     floor = (prev_boundary or -1) + 1
-    pattern = os.path.join(training_output, "*/checkpoints/*.pt")
     intermediates = []
-    for path in glob.glob(pattern):
-        basename = os.path.basename(path)
-        if "_ema_" in basename:
-            continue
-        m = re.match(r"^(\d+)\.pt$", basename)
-        if not m:
-            continue
-        step = int(m.group(1))
-        if floor <= step < target:
-            intermediates.append((step, path))
-    intermediates.sort(key=lambda x: x[0])
+    # Scan both .pt and .pt.age files
+    for ext_pattern in ["*.pt", "*.pt.age"]:
+        pattern = os.path.join(training_output, f"*/checkpoints/{ext_pattern}")
+        for path in glob.glob(pattern):
+            basename = os.path.basename(path)
+            if "_ema_" in basename:
+                continue
+            m = re.match(r"^(\d+)\.pt(?:\.age)?$", basename)
+            if not m:
+                continue
+            step = int(m.group(1))
+            if floor <= step < target:
+                intermediates.append((step, path))
+    # Deduplicate (same step may exist as both .pt and .pt.age)
+    seen: dict[int, str] = {}
+    for step, path in intermediates:
+        if step not in seen or not path.endswith(".age"):
+            seen[step] = path
+    intermediates = sorted(seen.items(), key=lambda x: x[0])
     return intermediates
 
 
@@ -173,8 +224,209 @@ def wait_for_watcher(pause_seconds: int, run_info: dict,
             except Exception:
                 pass
         time.sleep(10)
-    print(f"  Watcher upload not confirmed after {pause_seconds}s — proceeding anyway.",
+    print(f"  WARNING: Watcher upload not confirmed after {pause_seconds}s "
+          f"— proceeding to next run. Checkpoint may not be on R2 yet.",
           flush=True)
+
+
+# ── OHLC verification (hard gate on training progression) ────────────────────
+
+def verify_ohlc_completeness(ohlc_csvs: Path | list[Path], step_lo: int,
+                              step_hi: int,
+                              run_name: str | None = None) -> tuple[bool, str]:
+    """Verify OHLC data covers the full step range for a completed run.
+    Returns (is_complete, message). This is a HARD GATE — training MUST NOT
+    advance to the next run if this returns False.
+
+    ohlc_csvs: single Path or list of Paths. For resumed runs, pass ALL
+    OHLC CSVs covering the run window (original + resume variants) so the
+    union of their step coverage is checked.
+    """
+    import csv as _csv
+    if isinstance(ohlc_csvs, Path):
+        ohlc_csvs = [ohlc_csvs]
+
+    existing = [p for p in ohlc_csvs if p.exists()]
+    if not existing:
+        names = ", ".join(str(p) for p in ohlc_csvs)
+        return False, f"No OHLC files exist: {names}"
+
+    covered_steps: set[int] = set()
+    candle_count = 0
+    rows_with_null_loss = 0
+
+    for csv_path in existing:
+        with open(csv_path) as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                if run_name and row.get("run_name") and row["run_name"] != run_name:
+                    continue
+                try:
+                    first = int(row["step_first"])
+                    last = int(row["step_last"])
+                except (ValueError, KeyError):
+                    continue
+                if first < step_lo or last > step_hi:
+                    continue
+                for s in range(first, last + 1):
+                    covered_steps.add(s)
+                candle_count += 1
+
+                loss_med = row.get("loss_median", "")
+                if not loss_med or loss_med.strip() == "":
+                    rows_with_null_loss += 1
+
+    expected_count = step_hi - step_lo + 1
+    actual_count = len(covered_steps)
+    coverage_pct = (actual_count / expected_count * 100) if expected_count > 0 else 0
+    files_msg = f" across {len(existing)} file(s)" if len(existing) > 1 else ""
+
+    if actual_count == 0:
+        return False, (f"OHLC has ZERO steps for range {step_lo}-{step_hi} "
+                       f"({candle_count} candles found{files_msg})")
+
+    missing = set(range(step_lo, step_hi + 1)) - covered_steps
+    if missing:
+        first_missing = min(missing)
+        return False, (f"OHLC incomplete: {coverage_pct:.1f}% coverage "
+                       f"({actual_count}/{expected_count} steps), "
+                       f"first missing step: {first_missing}")
+
+    if rows_with_null_loss > 0:
+        return False, (f"OHLC has {rows_with_null_loss} candles with null loss values "
+                       f"(100% step coverage but data quality failure)")
+
+    return True, (f"OHLC verified: {candle_count} candles, "
+                  f"100% step coverage ({actual_count} steps){files_msg}, "
+                  f"no null values")
+
+
+def check_ohlc_freshness(heartbeat_path: Path) -> tuple[bool, float]:
+    """Check that OHLC heartbeat has been touched recently.
+    Returns (is_fresh, age_seconds).
+    """
+    if not heartbeat_path.exists():
+        return False, float("inf")
+    age = time.time() - heartbeat_path.stat().st_mtime
+    return age < OHLC_STALE_THRESHOLD, age
+
+
+def check_training_active(training_stdout: Path) -> bool:
+    """Check if training is actively producing output (stdout growing)."""
+    if not training_stdout.exists():
+        return False
+    age = time.time() - training_stdout.stat().st_mtime
+    return age < 120
+
+
+def estimate_steps_from_stdout(training_stdout: Path) -> int:
+    """Quick estimate of steps produced by counting 'Step N' lines in tail."""
+    try:
+        with open(training_stdout, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            seek_pos = max(0, size - 50000)
+            f.seek(seek_pos)
+            tail = f.read().decode("utf-8", errors="replace")
+        steps = re.findall(r"Step (\d+)", tail)
+        return int(steps[-1]) if steps else 0
+    except Exception:
+        return 0
+
+
+# ── Lock file (prevent duplicate instances) ─────────────────────────────────
+
+def acquire_lock(lock_path: Path) -> bool:
+    """Acquire an exclusive lock file. Returns True if acquired."""
+    import fcntl
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_fh = open(lock_path, "w")
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fh.write(f"{os.getpid()}\n")
+        lock_fh.flush()
+        # Keep file handle open for the lifetime of the process
+        acquire_lock._fh = lock_fh
+        return True
+    except (IOError, OSError):
+        return False
+
+
+def release_lock(lock_path: Path) -> None:
+    import fcntl
+    fh = getattr(acquire_lock, "_fh", None)
+    if fh:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            fh.close()
+        except Exception:
+            pass
+    lock_path.unlink(missing_ok=True)
+
+
+# ── OHLC root cause diagnostics ──────────────────────────────────────────────
+
+def _diagnose_ohlc_failure(monitor_pid: int, ohlc_csv: Path,
+                            heartbeat_path: Path, training_stdout: Path,
+                            monitor_state: Path | None,
+                            heartbeat_age: float) -> list[str]:
+    """Diagnose WHY OHLC stopped being written. Returns list of findings."""
+    findings = []
+
+    # 1. Is training_monitor PID alive?
+    if monitor_pid and not is_process_alive(monitor_pid):
+        findings.append(f"training_monitor pid={monitor_pid} is DEAD")
+    elif monitor_pid:
+        findings.append(f"training_monitor pid={monitor_pid} is alive")
+
+    # 2. Is training producing step output?
+    if training_stdout.exists():
+        stdout_age = time.time() - training_stdout.stat().st_mtime
+        stdout_size = training_stdout.stat().st_size
+        if stdout_age > 120:
+            findings.append(f"training stdout stale ({stdout_age:.0f}s old, {stdout_size} bytes)")
+        else:
+            findings.append(f"training stdout active ({stdout_age:.0f}s old, {stdout_size} bytes)")
+    else:
+        findings.append("training stdout file does not exist")
+
+    # 3. Does OHLC file exist and have data?
+    if ohlc_csv.exists():
+        ohlc_size = ohlc_csv.stat().st_size
+        ohlc_age = time.time() - ohlc_csv.stat().st_mtime
+        findings.append(f"OHLC file exists ({ohlc_size} bytes, last modified {ohlc_age:.0f}s ago)")
+    else:
+        findings.append("OHLC file does NOT exist")
+
+    # 4. Check monitor state file
+    if monitor_state and monitor_state.exists():
+        try:
+            state = json.loads(monitor_state.read_text())
+            findings.append(f"monitor state: file_pos={state.get('file_pos', '?')}, "
+                          f"steps_written={state.get('steps_written', '?')}")
+        except Exception:
+            findings.append("monitor state file corrupt")
+    elif monitor_state:
+        findings.append("monitor state file does not exist (first start?)")
+
+    # 5. Check heartbeat
+    if heartbeat_path.exists():
+        findings.append(f"heartbeat file exists, age={heartbeat_age:.0f}s")
+    else:
+        findings.append("heartbeat file does NOT exist (monitor never wrote a candle?)")
+
+    # 6. Check disk space
+    try:
+        st = os.statvfs(str(ohlc_csv.parent))
+        free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+        if free_gb < 1:
+            findings.append(f"DISK NEARLY FULL: {free_gb:.2f} GB free")
+        else:
+            findings.append(f"disk OK: {free_gb:.1f} GB free")
+    except Exception:
+        pass
+
+    return findings
 
 
 # ── Companion process management ─────────────────────────────────────────────
@@ -222,11 +474,19 @@ def stop_process(pid: int, name: str, timeout: int = 10) -> None:
 def is_process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    # os.kill(0) succeeds for zombies — check /proc status
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("State:"):
+                    return "Z" not in line
+    except (FileNotFoundError, PermissionError):
+        return False
+    return True
 
 
 def stop_all_companions(companions: dict[str, int]) -> None:
@@ -236,34 +496,45 @@ def stop_all_companions(companions: dict[str, int]) -> None:
 
 
 def start_training_monitor(training_stdout: Path, ohlc_csv: Path,
-                            log_dir: Path) -> int:
+                            log_dir: Path, run_name: str = "unknown",
+                            heartbeat_path: Path | None = None,
+                            state_file: Path | None = None) -> int:
     cmd = [
         sys.executable, str(SCRIPTS_DIR / "training_monitor.py"),
         "--log", str(training_stdout),
         "--out", str(ohlc_csv),
         "--poll-interval", "5",
+        "--run-name", run_name,
     ]
+    if heartbeat_path:
+        cmd.extend(["--heartbeat", str(heartbeat_path)])
+    if state_file:
+        cmd.extend(["--state-file", str(state_file)])
     return start_background_process(
         cmd, log_dir / "training_monitor.stdout", "training_monitor",
         append=True)
 
 
-def build_sidecar_file_list(log_dir: Path, training_stdout: Path) -> list[Path]:
-    return [
+def build_sidecar_file_list(log_dir: Path, training_stdout: Path,
+                            per_run_ohlc: Path | None = None) -> list[Path]:
+    files = [
         training_stdout,
         log_dir / "chain_runner.jsonl",
         log_dir / "chain_runner.stdout",
         log_dir / "ram_monitor.csv",
         log_dir / "checkpoint_watcher.log",
-        log_dir / "training_ohlc.csv",
         log_dir / "training_monitor.stdout",
         log_dir / "ram_monitor.stdout",
     ]
+    if per_run_ohlc:
+        files.append(per_run_ohlc)
+    return files
 
 
 def start_sidecar(r2_prefix: str, log_dir: Path,
-                   training_stdout: Path) -> int:
-    file_list = build_sidecar_file_list(log_dir, training_stdout)
+                   training_stdout: Path,
+                   per_run_ohlc: Path | None = None) -> int:
+    file_list = build_sidecar_file_list(log_dir, training_stdout, per_run_ohlc)
     cmd = [
         "bash", str(SCRIPTS_DIR / "sidecar_log_mirror.sh"),
         "--prefix", r2_prefix,
@@ -273,6 +544,21 @@ def start_sidecar(r2_prefix: str, log_dir: Path,
         cmd.extend(["--add", str(f)])
     return start_background_process(
         cmd, log_dir / "sidecar.log", "sidecar", append=True)
+
+
+def start_checkpoint_watcher(training_output: str, log_dir: Path,
+                              env_file: Path, r2_prefix: str) -> int:
+    """Start checkpoint_watcher as a managed companion. MANDATORY."""
+    cmd = [
+        sys.executable, str(SCRIPTS_DIR / "checkpoint_watcher.py"),
+        "--env-file", str(env_file),
+        "--runs-root", str(training_output),
+        "--poll-interval", "30",
+        "--prefix-override", r2_prefix,
+    ]
+    return start_background_process(
+        cmd, log_dir / "checkpoint_watcher.log", "checkpoint_watcher",
+        append=True)
 
 
 def health_check_companions(companions: dict[str, int]) -> list[str]:
@@ -458,12 +744,29 @@ def cleanup_pdb_block(run_info: dict, pdb_staging_dir: Path,
 # ── Main chain loop ──────────────────────────────────────────────────────────
 
 def run_chain(args) -> int:
+    print_version_banner()
+
+    # Print companion script versions for audit
+    for script_name in ["checkpoint_watcher.py", "training_monitor.py",
+                        "sidecar_log_mirror.sh", "select_next_training_run.py"]:
+        script_path = SCRIPTS_DIR / script_name
+        if script_path.exists():
+            sha = _file_sha256(str(script_path))
+            print(f"  companion: {script_name}  sha256:{sha}", flush=True)
+    print(flush=True)
+
+    # ── Exclusive lock — prevent duplicate chain_runner instances ────
+    if not acquire_lock(LOCK_FILE):
+        print(f"FATAL: Another chain_runner is already running "
+              f"(lock file: {LOCK_FILE}). Exiting.", flush=True)
+        return 1
+
     schedule = build_full_schedule()
+    total_runs = len(schedule)
     chain_log = args.chain_log
     pdb_staging_dir = Path(args.pdb_staging_dir)
     creds_file = args.creds_file
     log_dir = Path(args.log_dir)
-    ohlc_csv = Path(args.ohlc_csv)
     r2_prefix = args.r2_ops_prefix
     manage = args.manage_companions
 
@@ -471,7 +774,8 @@ def run_chain(args) -> int:
                     creds_file)
 
     log_event(chain_log, {"event": "chain_start",
-                          "total_runs": 147,
+                          "version": VERSION,
+                          "total_runs": total_runs,
                           "campaign": R2_CAMPAIGN_PREFIX,
                           "manage_companions": manage})
 
@@ -480,23 +784,44 @@ def run_chain(args) -> int:
     companions: dict[str, int] = {}
     training_stdout_fh: IO | None = None
 
+    # ── Start checkpoint_watcher (persistent, runs across all runs) ──────
+    # MANDATORY: training must not proceed without R2 checkpoint uploads.
+    # Local disk is ephemeral; only R2 is persistent storage.
+    if manage:
+        env_file = Path(args.env_file)
+        if not env_file.exists():
+            print(f"FATAL: checkpoint_watcher env file not found: {env_file}",
+                  flush=True)
+            print("  Cannot start training without checkpoint_watcher.",
+                  flush=True)
+            release_lock(LOCK_FILE)
+            return 1
+        companions["checkpoint_watcher"] = start_checkpoint_watcher(
+            args.training_output, log_dir, env_file, r2_prefix)
+        log_event(chain_log, {
+            "event": "checkpoint_watcher_started",
+            "pid": companions["checkpoint_watcher"],
+        })
+
     while True:
         latest_step, latest_ckpt = find_latest_boundary_checkpoint(
-            args.training_output)
+            args.training_output, r2_prefix=r2_prefix,
+            creds_file=str(creds_file))
         completed = get_completed_run_count(latest_step)
 
         run_idx = completed
-        while run_idx < 147 and schedule[run_idx]["run"] in skipped_runs:
+        while run_idx < total_runs and schedule[run_idx]["run"] in skipped_runs:
             run_idx += 1
 
-        if run_idx >= 147:
+        if run_idx >= total_runs:
             log_event(chain_log, {"event": "chain_complete",
                                   "completed_runs": completed,
                                   "skipped_runs": sorted(skipped_runs)})
-            print("All 147 runs complete (or skipped). Training is done.",
+            print(f"All {total_runs} runs complete (or skipped). Training is done.",
                   flush=True)
             if manage:
                 stop_all_companions(companions)
+            release_lock(LOCK_FILE)
             return 0
 
         next_run = schedule[run_idx]
@@ -565,6 +890,30 @@ def run_chain(args) -> int:
             run_name_override = f"{base_name}_resume{resume_num}_{ts}"
             resume_ckpt = highest_path
 
+            # If the latest intermediate exists only as .age (encrypted by
+            # checkpoint_watcher post-upload), train.py cannot load it.
+            # Recover the cleartext .pt from R2.
+            if resume_ckpt and resume_ckpt.endswith(".age"):
+                print(f"  Latest intermediate is encrypted ({resume_ckpt}); "
+                      f"recovering cleartext for step {highest_step} from R2...",
+                      flush=True)
+                rec_step, rec_path = _recover_boundary_from_r2(
+                    args.training_output, r2_prefix,
+                    creds_file=str(creds_file),
+                    target_step=highest_step)
+                if rec_step == highest_step and rec_path:
+                    resume_ckpt = rec_path
+                else:
+                    print(f"  WARNING: could not recover step {highest_step} "
+                          f"from R2; falling back to latest boundary checkpoint.",
+                          flush=True)
+                    # Discard the intermediate-resume attempt; chain_runner
+                    # will start fresh from the boundary (which has its own
+                    # R2 fallback in find_latest_boundary_checkpoint).
+                    seed_override = None
+                    run_name_override = None
+                    resume_ckpt = latest_ckpt
+
             log_event(chain_log, {
                 "event": "resuming_interrupted",
                 "run_number": next_run["run"],
@@ -630,23 +979,52 @@ def run_chain(args) -> int:
             seed_override=seed_override,
             run_name_override=run_name_override)
 
+        run_name = training_stdout.stem
         print(f"  Training PID: {proc.pid}", flush=True)
+
+        # ── Per-run OHLC paths ──────────────────────────────────────────
+        ohlc_dir = Path(args.log_dir) / "ohlc"
+        ohlc_dir.mkdir(parents=True, exist_ok=True)
+        per_run_ohlc = ohlc_dir / f"{run_name}.csv"
+        heartbeat_path = ohlc_dir / f"{run_name}.heartbeat"
+        monitor_state = ohlc_dir / f"{run_name}.monitor_state"
 
         # ── Start new companions for this run ────────────────────────────
         if manage:
             companions["training_monitor"] = start_training_monitor(
-                training_stdout, ohlc_csv, log_dir)
+                training_stdout, per_run_ohlc, log_dir,
+                run_name=run_name,
+                heartbeat_path=heartbeat_path,
+                state_file=monitor_state)
             companions["sidecar"] = start_sidecar(
-                r2_prefix, log_dir, training_stdout)
+                r2_prefix, log_dir, training_stdout, per_run_ohlc)
 
-            run_name = training_stdout.stem
             write_run_manifest(log_dir, run_name, companions, next_run,
                                training_stdout, proc.pid)
 
         # ── Wait for training with health monitoring ─────────────────────
+        ohlc_kill_reason = None
         try:
             while proc.poll() is None:
+                if _SIGTERM_RECEIVED:
+                    print("  SIGTERM: stopping training gracefully...", flush=True)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    log_event(chain_log, {"event": "sigterm_shutdown",
+                                          "run_number": next_run["run"]})
+                    if manage:
+                        stop_all_companions(companions)
+                    if training_stdout_fh:
+                        training_stdout_fh.close()
+                    release_lock(LOCK_FILE)
+                    return 143
+
                 if manage:
+                    # 1. Check if companion PIDs are alive
                     dead = health_check_companions(companions)
                     for name in dead:
                         log_event(chain_log, {
@@ -656,22 +1034,96 @@ def run_chain(args) -> int:
                         })
                         if name == "training_monitor":
                             companions[name] = start_training_monitor(
-                                training_stdout, ohlc_csv, log_dir)
+                                training_stdout, per_run_ohlc, log_dir,
+                                run_name=run_name,
+                                heartbeat_path=heartbeat_path,
+                                state_file=monitor_state)
                         elif name == "sidecar":
                             companions[name] = start_sidecar(
-                                r2_prefix, log_dir, training_stdout)
+                                r2_prefix, log_dir, training_stdout,
+                                per_run_ohlc)
+                        elif name == "checkpoint_watcher":
+                            companions[name] = start_checkpoint_watcher(
+                                args.training_output, log_dir,
+                                Path(args.env_file), r2_prefix)
+
+                    # 2. OHLC freshness gate — HARD REQUIREMENT
+                    current_step = estimate_steps_from_stdout(training_stdout)
+                    step_lo = next_run["checkpoint_step"] - STEPS_PER_RUN + 1
+                    steps_into_run = current_step - step_lo + 1 if current_step >= step_lo else 0
+
+                    if steps_into_run > OHLC_STALE_GRACE_STEPS:
+                        is_fresh, age = check_ohlc_freshness(heartbeat_path)
+                        if not is_fresh and check_training_active(training_stdout):
+                            # ── Root cause diagnosis before any restart ──
+                            diag = _diagnose_ohlc_failure(
+                                companions.get("training_monitor", 0),
+                                per_run_ohlc, heartbeat_path,
+                                training_stdout, monitor_state, age)
+                            print(f"  WARNING: OHLC heartbeat stale ({age:.0f}s)",
+                                  flush=True)
+                            for line in diag:
+                                print(f"    DIAG: {line}", flush=True)
+                            log_event(chain_log, {
+                                "event": "ohlc_stale_detected",
+                                "run_number": next_run["run"],
+                                "heartbeat_age_s": round(age, 1),
+                                "diagnosis": diag,
+                            })
+
+                            # Attempt targeted fix based on diagnosis
+                            if companions.get("training_monitor"):
+                                stop_process(companions["training_monitor"],
+                                             "training_monitor", timeout=5)
+                            companions["training_monitor"] = start_training_monitor(
+                                training_stdout, per_run_ohlc, log_dir,
+                                run_name=run_name,
+                                heartbeat_path=heartbeat_path,
+                                state_file=monitor_state)
+                            time.sleep(30)
+
+                            is_fresh2, age2 = check_ohlc_freshness(heartbeat_path)
+                            if not is_fresh2:
+                                diag2 = _diagnose_ohlc_failure(
+                                    companions.get("training_monitor", 0),
+                                    per_run_ohlc, heartbeat_path,
+                                    training_stdout, monitor_state, age2)
+                                ohlc_kill_reason = (
+                                    f"OHLC heartbeat still stale after monitor restart "
+                                    f"({age2:.0f}s old). Root cause: {'; '.join(diag2)}. "
+                                    f"Training HALTED — fix the root cause before retrying.")
+                                print(f"  FATAL: {ohlc_kill_reason}", flush=True)
+                                log_event(chain_log, {
+                                    "event": "ohlc_fatal",
+                                    "run_number": next_run["run"],
+                                    "diagnosis": diag2,
+                                    "reason": ohlc_kill_reason,
+                                })
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=30)
+                                except subprocess.TimeoutExpired:
+                                    proc.kill()
+                                    proc.wait()
+                                break
+
                 time.sleep(HEALTH_CHECK_INTERVAL)
         except KeyboardInterrupt:
             print("\n  KeyboardInterrupt — sending SIGTERM to training...",
                   flush=True)
             proc.terminate()
-            proc.wait(timeout=30)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
             log_event(chain_log, {"event": "chain_interrupted",
                                   "run_number": next_run["run"]})
             if manage:
                 stop_all_companions(companions)
             if training_stdout_fh:
                 training_stdout_fh.close()
+            release_lock(LOCK_FILE)
             return 130
 
         duration = time.time() - t0
@@ -681,10 +1133,80 @@ def run_chain(args) -> int:
             training_stdout_fh.close()
             training_stdout_fh = None
 
+        # ── Flush training_monitor's final candle before OHLC check ─────
+        # training_monitor flushes its in-memory candle on SIGTERM (graceful
+        # shutdown). We MUST stop it and wait for exit BEFORE checking OHLC
+        # completeness, otherwise we race against the final candle write.
+        if manage and companions.get("training_monitor"):
+            stop_process(companions["training_monitor"], "training_monitor")
+            companions["training_monitor"] = 0
+
+        # ── Handle OHLC-triggered kill ──────────────────────────────────
+        if ohlc_kill_reason:
+            consecutive_failures += 1
+            log_event(chain_log, {
+                "event": "run_failed",
+                "run_number": next_run["run"],
+                "dataset": next_run["dataset"],
+                "seed": seed_override or next_run["seed"],
+                "exit_code": -1,
+                "duration_s": round(duration, 1),
+                "consecutive_failures": consecutive_failures,
+                "reason": ohlc_kill_reason,
+            })
+            if consecutive_failures >= args.max_retries:
+                log_event(chain_log, {
+                    "event": "fatal_error",
+                    "run_number": next_run["run"],
+                    "reason": f"OHLC monitoring failure after {consecutive_failures} attempts",
+                })
+                if manage:
+                    stop_all_companions(companions)
+                release_lock(LOCK_FILE)
+                return 1
+            print(f"  Retrying in 60s (failure {consecutive_failures}/{args.max_retries})...",
+                  flush=True)
+            time.sleep(60)
+            continue
+
         boundary_exists = find_boundary_checkpoint(
             next_run, args.training_output) is not None
 
         if exit_code == 0 or boundary_exists:
+            # ── OHLC completeness verification (HARD GATE) ──────────────
+            step_lo = next_run["checkpoint_step"] - STEPS_PER_RUN + 1
+            step_hi = next_run["checkpoint_step"]
+            # For resumed runs, OHLC data is split across original + resume
+            # CSVs. Collect ALL matching files for this run window.
+            run_prefix = f"run{next_run['run']:03d}_"
+            step_tag = f"step{next_run['checkpoint_step']}_"
+            all_run_ohlcs = sorted(
+                p for p in ohlc_dir.glob(f"{run_prefix}*{step_tag}*.csv"))
+            if not all_run_ohlcs:
+                all_run_ohlcs = [per_run_ohlc]
+            ohlc_ok, ohlc_msg = verify_ohlc_completeness(
+                all_run_ohlcs, step_lo, step_hi)
+
+            if not ohlc_ok:
+                log_event(chain_log, {
+                    "event": "ohlc_verification_failed",
+                    "run_number": next_run["run"],
+                    "dataset": next_run["dataset"],
+                    "seed": seed_override or next_run["seed"],
+                    "exit_code": exit_code,
+                    "duration_s": round(duration, 1),
+                    "ohlc_status": ohlc_msg,
+                    "reason": f"Training completed but OHLC verification failed: {ohlc_msg}",
+                })
+                print(f"  FATAL: OHLC verification failed — {ohlc_msg}", flush=True)
+                print(f"  Training WILL NOT advance. The run must be repeated "
+                      f"with working OHLC monitoring.", flush=True)
+                if manage:
+                    stop_all_companions(companions)
+                release_lock(LOCK_FILE)
+                return 1
+
+            print(f"  OHLC: {ohlc_msg}", flush=True)
             log_event(chain_log, {
                 "event": "run_end",
                 "run_number": next_run["run"],
@@ -693,6 +1215,8 @@ def run_chain(args) -> int:
                 "exit_code": exit_code,
                 "duration_s": round(duration, 1),
                 "boundary_checkpoint": next_run["checkpoint_step"],
+                "ohlc_status": ohlc_msg,
+                "ohlc_file": str(per_run_ohlc),
             })
             consecutive_failures = 0
 
@@ -727,6 +1251,7 @@ def run_chain(args) -> int:
                 })
                 if manage:
                     stop_all_companions(companions)
+                release_lock(LOCK_FILE)
                 return 1
             print(f"  Retrying in 60s (failure {consecutive_failures}/{args.max_retries})...",
                   flush=True)
@@ -752,18 +1277,25 @@ def main() -> int:
     ap.add_argument("--protenix-dir", default=DEFAULT_PROTENIX_DIR)
     ap.add_argument("--chain-log", type=Path, default=CHAIN_LOG_DEFAULT)
     ap.add_argument("--watcher-state", type=Path, default=WATCHER_STATE_DEFAULT)
-    ap.add_argument("--inter-run-pause", type=int, default=90,
-                    help="Seconds between runs for watcher upload (default: 90)")
+    ap.add_argument("--inter-run-pause", type=int, default=480,
+                    help="Seconds between runs for watcher upload (default: 480). "
+                         "Must cover poll-delay (≤30s) + model upload (~60s) + "
+                         "ema upload (~60s) + encrypt (~15s) + state write. "
+                         "Below ~180s, state file will NOT yet show the boundary "
+                         "step when timeout fires, causing a guaranteed "
+                         "warning-then-recovery cycle on the next run.")
     ap.add_argument("--max-retries", type=int, default=3,
                     help="Max consecutive failures before aborting (default: 3)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Print what would run without executing")
     ap.add_argument("--log-dir", default="/data",
                     help="Directory for companion process logs (default: /data)")
-    ap.add_argument("--ohlc-csv", default="/data/training_ohlc.csv",
-                    help="Path for OHLC training monitor output")
+    ap.add_argument("--ohlc-dir", default="/data/logs/ohlc",
+                    help="Directory for per-run OHLC CSV files")
     ap.add_argument("--r2-ops-prefix", default=R2_CAMPAIGN_PREFIX,
                     help="R2 ops/ prefix for sidecar log mirror")
+    ap.add_argument("--env-file", default="/data/.env.cloudflare",
+                    help="Env file with R2 credentials for checkpoint_watcher")
     manage_group = ap.add_mutually_exclusive_group()
     manage_group.add_argument("--manage-companions", dest="manage_companions",
                               action="store_true", default=True,
