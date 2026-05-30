@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.5.0-20260530"
+VERSION = "2.6.0-20260530"
 
 import argparse
 import glob
@@ -951,6 +951,65 @@ def run_chain(args) -> int:
             if manage:
                 stop_all_companions(companions)
             return 1
+
+        # ── Pre-flight checkpoint audit (resume only) ────────────────────
+        # Verify the resume checkpoint has correct structure (model +
+        # optimizer + scheduler + step), EMA continuity is in-range, and
+        # internal step counters are consistent. This catches silent
+        # bugs (like the v2.5.0 EMA-discontinuity issue) at the resume
+        # boundary instead of after 5000 wasted steps. Skipped for Run 1
+        # fresh starts since the Protenix base model has a different
+        # structure (no optimizer/scheduler/step).
+        if resume_ckpt:
+            audit_script = SCRIPTS_DIR / "audit_state_continuity.py"
+            if not audit_script.exists():
+                # Older deploys may have it under a different path —
+                # don't block training on a missing audit script, but
+                # log loudly so the next deploy fixes it.
+                print(f"  WARNING: pre-flight audit script not found at "
+                      f"{audit_script}; skipping pre-flight check.",
+                      flush=True)
+            else:
+                print(f"  Pre-flight audit: {resume_ckpt}", flush=True)
+                audit_cmd = ["python3", str(audit_script),
+                             "--checkpoint", str(resume_ckpt),
+                             "--require-ema"]
+                try:
+                    audit_proc = subprocess.run(
+                        audit_cmd, capture_output=True, text=True,
+                        timeout=180)
+                except subprocess.TimeoutExpired:
+                    print(f"  WARNING: pre-flight audit timed out after 180s; "
+                          f"proceeding with caution.", flush=True)
+                    audit_proc = None
+                if audit_proc is not None:
+                    for line in audit_proc.stdout.split("\n"):
+                        if line.strip():
+                            print(f"    {line}", flush=True)
+                    if audit_proc.returncode == 2:
+                        # Hard failure — checkpoint is corrupt or
+                        # structurally wrong. Refuse to launch.
+                        log_event(chain_log, {
+                            "event": "fatal_error",
+                            "run_number": next_run["run"],
+                            "reason": (f"pre-flight audit hard failure on "
+                                       f"{resume_ckpt}"),
+                        })
+                        if manage:
+                            stop_all_companions(companions)
+                        return 1
+                    elif audit_proc.returncode == 1:
+                        log_event(chain_log, {
+                            "event": "audit_warning",
+                            "run_number": next_run["run"],
+                            "checkpoint": str(resume_ckpt),
+                        })
+                    else:
+                        log_event(chain_log, {
+                            "event": "audit_passed",
+                            "run_number": next_run["run"],
+                            "checkpoint": str(resume_ckpt),
+                        })
 
         if args.dry_run:
             print(f"  [DRY RUN] Would launch run {next_run['run']}: "

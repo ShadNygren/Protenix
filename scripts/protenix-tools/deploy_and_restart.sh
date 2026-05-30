@@ -28,6 +28,9 @@ REMOTE_SELECT="/data/scripts/select_next_training_run.py"
 # Scripts to deploy (order matters: dependencies first)
 SCRIPTS=(
     "select_next_training_run.py"
+    "audit_state_continuity.py"
+    "audit_ema_continuity.py"
+    "audit_checkpoint_state.py"
     "checkpoint_watcher.py"
     "training_monitor.py"
     "sidecar_log_mirror.sh"
