@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.3.0-20260529"
+VERSION = "2.4.0-20260530"
 
 import argparse
 import glob

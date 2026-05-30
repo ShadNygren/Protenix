@@ -133,11 +133,20 @@ fi
 
 # Step 3: Stop chain_runner (which will stop training + companions via exit handling)
 info "=== STEP 3: Stop chain_runner ==="
-CHAIN_PID=$($SSH_CMD 'pgrep -f "python3.*chain_runner.py" | head -1' 2>/dev/null || echo "")
+# Find the PYTHON chain_runner process — NOT the bash wrapper (which has
+# the same string in its command line: `bash -c 'source ... && python3 -u
+# chain_runner.py ...'`). Signalling the bash wrapper leaves the python
+# child orphaned (reparented to init), not killed. The bug:
+# `pgrep -f "python3.*chain_runner.py" | head -1` returned the bash PID
+# first because both PIDs matched the pattern.
+#
+# Fix: use `pgrep -af` to get "PID full_command_line", then filter for
+# lines whose first command token is `python3`/`python` (not `bash`).
+CHAIN_PID=$($SSH_CMD 'pgrep -af "chain_runner\.py" | awk "\$2 ~ /^python[0-9.]*$/ {print \$1; exit}"' 2>/dev/null || echo "")
 if [[ -n "$CHAIN_PID" ]]; then
-    info "  Sending SIGTERM to chain_runner PID $CHAIN_PID"
-    # Use kill -INT (Ctrl+C) which triggers the KeyboardInterrupt handler
-    # that gracefully stops training, companions, and releases lock
+    info "  Sending SIGINT to chain_runner PYTHON PID $CHAIN_PID"
+    # SIGINT triggers the KeyboardInterrupt handler that gracefully
+    # stops training, companions, and releases lock.
     $SSH_CMD "kill -INT $CHAIN_PID" 2>/dev/null || true
     info "  Waiting up to 60s for graceful shutdown..."
     for i in $(seq 1 60); do
@@ -153,8 +162,21 @@ if [[ -n "$CHAIN_PID" ]]; then
         $SSH_CMD "kill -9 $CHAIN_PID" 2>/dev/null || true
         sleep 2
     fi
+    # Also clean up the bash wrapper if still around (no-op if python
+    # child already exited and bash followed).
+    $SSH_CMD 'pgrep -af "chain_runner\.py" | awk "\$2 ~ /^bash$/ {print \$1}" | xargs -r kill -9' 2>/dev/null || true
 else
-    info "  No running chain_runner found"
+    info "  No running chain_runner python process found"
+fi
+
+# Stale lock cleanup — chain_runner.py refuses to start if a lock file
+# exists, but SIGKILL leaves the lock behind. Empty lock files from a
+# previous failed-startup are also a problem. Safe to remove here only
+# because we've confirmed no chain_runner process is alive above.
+LOCK_HOLDER=$($SSH_CMD 'pgrep -af "chain_runner\.py" | awk "\$2 ~ /^python[0-9.]*$/" | head -1' 2>/dev/null || echo "")
+if [[ -z "$LOCK_HOLDER" ]]; then
+    $SSH_CMD 'rm -f /data/chain_runner.lock' 2>/dev/null || true
+    info "  Cleared any stale lock file"
 fi
 
 # Kill any orphaned training processes
@@ -179,19 +201,33 @@ sleep 3
 info "=== STEP 4: Restart chain_runner ==="
 info "  chain_runner will auto-detect progress from checkpoints and resume"
 $SSH_CMD 'source /dev/shm/secure/creds && cd /data/scripts && nohup python3 -u chain_runner.py > /data/chain_runner.stdout 2>&1 &'
-sleep 5
+# Give chain_runner enough time to clear startup (read lock, print version
+# banner, decide on resume strategy). If we check too early we may catch
+# it before a FATAL exit (e.g. stale lock) and falsely report success.
+sleep 15
 
 # Step 5: Verify new processes
 info "=== STEP 5: Verify new processes ==="
-NEW_CHAIN_PID=$($SSH_CMD 'pgrep -f "python3.*chain_runner.py" | head -1' 2>/dev/null || echo "")
+# Target the PYTHON chain_runner explicitly, NOT the bash wrapper.
+# Old code: `pgrep -f "python3.*chain_runner.py" | head -1` returned the
+# bash wrapper PID first — which is always alive briefly even when the
+# python child has FATAL-exited (e.g. lock file collision) — leading to
+# false-positive "✓ running" reports.
+NEW_CHAIN_PID=$($SSH_CMD 'pgrep -af "chain_runner\.py" | awk "\$2 ~ /^python[0-9.]*$/ {print \$1; exit}"' 2>/dev/null || echo "")
 if [[ -z "$NEW_CHAIN_PID" ]]; then
-    die "chain_runner did not start!"
+    # Try to surface the cause from chain_runner.stdout — most common
+    # causes are stale lock file or version-banner sha mismatch.
+    LAST_LOG=$($SSH_CMD "strings /data/chain_runner.stdout 2>/dev/null | tail -10" 2>/dev/null || echo "")
+    warn "chain_runner python process not found after 15s. Last stdout:"
+    echo "$LAST_LOG" >&2
+    die "chain_runner did not start (or exited immediately)!"
 fi
-info "  ✓ chain_runner running (PID $NEW_CHAIN_PID)"
+info "  ✓ chain_runner PYTHON running (PID $NEW_CHAIN_PID)"
 
 # Wait a bit for companions to start
 sleep 10
-WATCHER_PID=$($SSH_CMD 'pgrep -f checkpoint_watcher | head -1' 2>/dev/null || echo "")
+WATCHER_PID=$($SSH_CMD 'pgrep -af checkpoint_watcher | awk "\$2 ~ /^python[0-9.]*$/ && /-u? \/data/ {print \$1; exit}" | head -1' 2>/dev/null || echo "")
+[[ -z "$WATCHER_PID" ]] && WATCHER_PID=$($SSH_CMD 'pgrep -f checkpoint_watcher | head -1' 2>/dev/null || echo "")
 MONITOR_PID=$($SSH_CMD 'pgrep -f training_monitor | head -1' 2>/dev/null || echo "")
 
 [[ -n "$WATCHER_PID" ]] && info "  ✓ checkpoint_watcher running (PID $WATCHER_PID)" || warn "checkpoint_watcher not yet started"
