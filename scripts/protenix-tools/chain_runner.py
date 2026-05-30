@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.6.0-20260530"
+VERSION = "2.7.0-20260530"
 
 import argparse
 import glob
@@ -807,6 +807,34 @@ def run_chain(args) -> int:
         latest_step, latest_ckpt = find_latest_boundary_checkpoint(
             args.training_output, r2_prefix=r2_prefix,
             creds_file=str(creds_file))
+
+        # Ensure the EMA cleartext is also present locally for the resume
+        # boundary. find_latest_boundary_checkpoint only returns the model
+        # path; the matching EMA file may be present only as .pt.age
+        # (encrypted by checkpoint_watcher post-upload) — and v2.5.0
+        # build_launch_command needs the cleartext .pt to wire up
+        # --load_ema_checkpoint_path. _recover_boundary_from_r2 v2.4.0+
+        # downloads both model and EMA when called with target_step;
+        # since the model is already local, only EMA gets a fresh
+        # download (the function no-ops on the model side because the
+        # local file already exists at the same path).
+        if latest_ckpt and latest_step is not None:
+            ema_local = latest_ckpt.replace(".pt", "_ema_0.999.pt")
+            if not os.path.exists(ema_local):
+                print(f"  EMA cleartext missing at {ema_local} — "
+                      f"recovering from R2 (target_step={latest_step})",
+                      flush=True)
+                _recover_boundary_from_r2(
+                    args.training_output, r2_prefix,
+                    creds_file=str(creds_file),
+                    target_step=latest_step)
+                if os.path.exists(ema_local):
+                    print(f"  EMA cleartext now present: {ema_local}",
+                          flush=True)
+                else:
+                    print(f"  WARNING: EMA still missing after R2 recovery; "
+                          f"pre-flight audit will hard-fail.", flush=True)
+
         completed = get_completed_run_count(latest_step)
 
         run_idx = completed
