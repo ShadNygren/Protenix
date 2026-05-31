@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.7.0-20260530"
+VERSION = "2.8.0-20260531"
 
 import argparse
 import glob
@@ -807,6 +807,51 @@ def run_chain(args) -> int:
         latest_step, latest_ckpt = find_latest_boundary_checkpoint(
             args.training_output, r2_prefix=r2_prefix,
             creds_file=str(creds_file))
+
+        # CRITICAL SAFETY CHECK: refuse to silently fall back to Run 1
+        # when training history exists.
+        #
+        # On 2026-05-31 the Run 11 -> Run 12 transition collapsed to Run 1
+        # because a single ConnectionResetError during R2 recovery made
+        # find_latest_boundary_checkpoint return None. get_completed_run_count
+        # then mapped None to 0, schedule[0] is Run 1, and chain_runner
+        # silently started a fresh Run 1 loading the base model — about
+        # to discard 55000 steps of training.
+        #
+        # The check: if find_latest_boundary returned None BUT evidence of
+        # past training exists (local .pt.age files, watcher upload state),
+        # this is a FATAL error. The recovery is manual: re-download the
+        # latest boundary from R2 to the local dir, then restart chain_runner.
+        # NEVER silently restart from Run 1 when we know training has progressed.
+        if latest_step is None:
+            has_local_age = bool(list(
+                Path(args.training_output).rglob("*.pt.age")))
+            has_watcher_uploads = False
+            try:
+                if args.watcher_state.exists():
+                    ws = json.loads(args.watcher_state.read_text())
+                    has_watcher_uploads = bool(ws.get("uploaded"))
+            except Exception:
+                pass
+            if has_local_age or has_watcher_uploads:
+                reason = (
+                    "find_latest_boundary_checkpoint returned None, but "
+                    f"local .pt.age files exist ({has_local_age}) or "
+                    f"watcher upload history exists ({has_watcher_uploads}). "
+                    "Refusing to restart from Run 1 — that would discard "
+                    "prior training. Manually recover the latest boundary "
+                    "checkpoint cleartext .pt from R2 to the matching "
+                    "local run dir, then restart chain_runner."
+                )
+                log_event(chain_log, {
+                    "event": "fatal_error",
+                    "reason": reason,
+                })
+                print(f"FATAL: {reason}", flush=True)
+                if manage:
+                    stop_all_companions(companions)
+                release_lock(LOCK_FILE)
+                return 1
 
         # Ensure the EMA cleartext is also present locally for the resume
         # boundary. find_latest_boundary_checkpoint only returns the model
