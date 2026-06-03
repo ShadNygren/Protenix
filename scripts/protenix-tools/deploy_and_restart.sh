@@ -28,6 +28,7 @@ REMOTE_SELECT="/data/scripts/select_next_training_run.py"
 # Scripts to deploy (order matters: dependencies first)
 SCRIPTS=(
     "select_next_training_run.py"
+    "validate_protenix_data_root.py"
     "audit_state_continuity.py"
     "audit_ema_continuity.py"
     "audit_checkpoint_state.py"

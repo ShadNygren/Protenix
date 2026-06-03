@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.8.0-20260531"
+VERSION = "2.9.0-20260603"
 
 import argparse
 import glob
@@ -779,6 +779,49 @@ def run_chain(args) -> int:
                           "campaign": R2_CAMPAIGN_PREFIX,
                           "manage_companions": manage})
 
+    # ── Startup environment validation (v2.9.0) ──────────────────────────
+    # Refuse to launch any run if the Protenix data tree is incomplete.
+    # Catches missing eval/test bioassembly files (the 2026-06-03 Run 20
+    # fatal_error root cause), missing base model, missing indices CSVs.
+    # Exit 2 = HARD FAIL, refuse to launch. Exit 1 = warnings, log and
+    # proceed.
+    validator = SCRIPTS_DIR / "validate_protenix_data_root.py"
+    if validator.exists():
+        print(f"  Startup environment audit: {validator}", flush=True)
+        try:
+            v_proc = subprocess.run(
+                ["python3", str(validator),
+                 "--base-model", str(args.base_model)],
+                capture_output=True, text=True, timeout=60)
+            for line in v_proc.stdout.split("\n"):
+                if line.strip():
+                    print(f"    {line}", flush=True)
+            if v_proc.returncode == 2:
+                log_event(chain_log, {
+                    "event": "fatal_error",
+                    "reason": "startup environment validation failed",
+                    "validator_stderr": v_proc.stderr[:500],
+                })
+                print("FATAL: startup environment validation refused to "
+                      "launch. Fix the missing data, then restart.",
+                      flush=True)
+                release_lock(LOCK_FILE)
+                return 1
+            elif v_proc.returncode == 1:
+                log_event(chain_log, {
+                    "event": "validator_warning",
+                    "stderr": v_proc.stderr[:500],
+                })
+            else:
+                log_event(chain_log, {"event": "validator_passed"})
+        except subprocess.TimeoutExpired:
+            print("  WARNING: validator timed out after 60s; proceeding "
+                  "with caution.", flush=True)
+    else:
+        print(f"  WARNING: startup validator not found at {validator}; "
+              f"skipping environment audit (v2.9.0+ expects it deployed).",
+              flush=True)
+
     consecutive_failures = 0
     skipped_runs: set[int] = set()
     companions: dict[str, int] = {}
@@ -956,6 +999,27 @@ def run_chain(args) -> int:
                 m = re.search(r"_resume(\d+)", p)
                 if m:
                     resume_num = max(resume_num, int(m.group(1)) + 1)
+            # v2.9.0 fix: ALSO scan training_output for any *_resume<N>_*
+            # dirs matching this run number, regardless of whether they
+            # contain checkpoints. The previous logic missed the case
+            # where a resume failed BEFORE saving any checkpoint (e.g.
+            # Run 20 _resume1 on 2026-06-03 crashed at step 99999 with
+            # no save). In that case the failed resume's dir is empty,
+            # so it wasn't represented in `intermediates`, and resume_num
+            # stayed at 1. Result: resume2 was launched with the same
+            # seed as resume1 → identical sample iteration, defeating
+            # the seed convention's purpose.
+            try:
+                run_id_prefix = f"run{next_run['run']:03d}_"
+            except (KeyError, TypeError):
+                run_id_prefix = None
+            if run_id_prefix:
+                pat = os.path.join(args.training_output,
+                                   f"{run_id_prefix}*_resume*")
+                for d in glob.glob(pat):
+                    m = re.search(r"_resume(\d+)_", d)
+                    if m:
+                        resume_num = max(resume_num, int(m.group(1)) + 1)
 
             seed_override = compute_resumption_seed(next_run["seed"], resume_num)
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
