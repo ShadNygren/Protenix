@@ -36,7 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "2.9.0-20260603"
+VERSION = "2.10.0-20260705"
 
 import argparse
 import glob
@@ -111,6 +111,8 @@ HEALTH_CHECK_INTERVAL = 60
 OHLC_STALE_THRESHOLD = 180  # seconds — kill training if OHLC heartbeat older than this
 OHLC_STALE_GRACE_STEPS = 50  # don't check OHLC freshness until training has produced this many steps
 TRAINING_STDOUT_STALENESS = 120  # seconds — used in multiple places
+DISK_WARN_PCT = 50   # log a warning when disk usage crosses this
+DISK_ALARM_PCT = 80  # log an alarm when disk usage crosses this (near-crash territory)
 
 # SIGTERM flag for graceful shutdown (pod restarts, preemption)
 _SIGTERM_RECEIVED = False
@@ -317,6 +319,21 @@ def check_training_active(training_stdout: Path) -> bool:
         return False
     age = time.time() - training_stdout.stat().st_mtime
     return age < 120
+
+
+def check_disk_usage(path: Path) -> tuple[float, float]:
+    """Return (percent_used, free_gb) for the filesystem holding `path`.
+
+    Returns (-1, -1) if the path can't be stat'd. Used by the health loop to
+    catch a filling disk BEFORE it halts training — the 2026-05-27 disk-83%
+    near-crash was caught only by a manual df.
+    """
+    try:
+        usage = shutil.disk_usage(str(path))
+        pct = usage.used / usage.total * 100 if usage.total else 0.0
+        return pct, usage.free / (1024 ** 3)
+    except OSError:
+        return -1.0, -1.0
 
 
 def estimate_steps_from_stdout(training_stdout: Path) -> int:
@@ -1200,6 +1217,9 @@ def run_chain(args) -> int:
 
         # ── Wait for training with health monitoring ─────────────────────
         ohlc_kill_reason = None
+        # Disk-alarm level for this run: 0 none, 1 warn, 2 alarm. Tracks the
+        # last emitted level so we log a transition once, not every cycle.
+        _last_disk_alarm_level = 0
         try:
             while proc.poll() is None:
                 if _SIGTERM_RECEIVED:
@@ -1218,6 +1238,45 @@ def run_chain(args) -> int:
                         training_stdout_fh.close()
                     release_lock(LOCK_FILE)
                     return 143
+
+                # ── Proactive disk-usage monitoring (runs regardless of
+                # companion management — disk fills either way). Throttled to
+                # log only on level transitions. ────────────────────────────
+                disk_pct, disk_free_gb = check_disk_usage(Path(args.training_output))
+                if disk_pct >= DISK_ALARM_PCT:
+                    if _last_disk_alarm_level < 2:
+                        print(f"  ALARM: disk {disk_pct:.0f}% used "
+                              f"({disk_free_gb:.0f} GB free) — checkpoint cleanup "
+                              f"may be failing; training at risk of halting.",
+                              flush=True)
+                        log_event(chain_log, {
+                            "event": "disk_alarm",
+                            "run_number": next_run["run"],
+                            "disk_pct_used": round(disk_pct, 1),
+                            "disk_free_gb": round(disk_free_gb, 1),
+                        })
+                        _last_disk_alarm_level = 2
+                elif disk_pct >= DISK_WARN_PCT:
+                    if _last_disk_alarm_level < 1:
+                        print(f"  WARNING: disk {disk_pct:.0f}% used "
+                              f"({disk_free_gb:.0f} GB free).", flush=True)
+                        log_event(chain_log, {
+                            "event": "disk_warning",
+                            "run_number": next_run["run"],
+                            "disk_pct_used": round(disk_pct, 1),
+                            "disk_free_gb": round(disk_free_gb, 1),
+                        })
+                        _last_disk_alarm_level = 1
+                elif disk_pct >= 0 and _last_disk_alarm_level != 0:
+                    # Disk dropped back below the warn threshold (cleanup ran).
+                    print(f"  disk recovered to {disk_pct:.0f}% used "
+                          f"({disk_free_gb:.0f} GB free).", flush=True)
+                    log_event(chain_log, {
+                        "event": "disk_recovered",
+                        "run_number": next_run["run"],
+                        "disk_pct_used": round(disk_pct, 1),
+                    })
+                    _last_disk_alarm_level = 0
 
                 if manage:
                     # 1. Check if companion PIDs are alive

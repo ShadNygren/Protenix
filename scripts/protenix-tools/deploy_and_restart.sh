@@ -38,8 +38,13 @@ SCRIPTS=(
     "chain_runner.py"
 )
 
-# Also deploy from the UHRF1 repo
-UHRF1_SCRIPTS_DIR="$SCRIPT_DIR/../../../UHRF1_inhibition_by_STELLA_for_cancer_therapy/scripts"
+# Several deployed scripts (select_next_training_run.py and the audit/validate
+# helpers) do NOT live in this fork's protenix-tools/ — they live in the
+# Protenix_Training repo's scripts/ dir. This fallback source dir is where the
+# SCRIPTS loop and the dedicated selector block look when a script is absent
+# from SCRIPT_DIR. (Previously this pointed at the UHRF1 repo, where these files
+# do NOT exist, so all five were silently skipped during deploy.)
+TRAINING_SCRIPTS_DIR="$SCRIPT_DIR/../../../Protenix_Training/scripts"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 info() { echo "[deploy] $*"; }
@@ -70,11 +75,11 @@ info "=== STEP 1: Deploy scripts ==="
 for script in "${SCRIPTS[@]}"; do
     local_path="$SCRIPT_DIR/$script"
     if [[ ! -f "$local_path" ]]; then
-        # Try UHRF1 scripts dir
-        local_path="$UHRF1_SCRIPTS_DIR/$script"
+        # Try the Protenix_Training scripts dir
+        local_path="$TRAINING_SCRIPTS_DIR/$script"
     fi
     if [[ ! -f "$local_path" ]]; then
-        warn "Script not found: $script (checked protenix-tools/ and UHRF1/scripts/)"
+        warn "Script not found: $script (checked protenix-tools/ and Protenix_Training/scripts/)"
         continue
     fi
     local_sha=$(sha256sum "$local_path" | cut -d' ' -f1)
@@ -86,8 +91,8 @@ for script in "${SCRIPTS[@]}"; do
     fi
 done
 
-# Deploy select_next_training_run.py from UHRF1 repo
-SELECT_LOCAL="$UHRF1_SCRIPTS_DIR/select_next_training_run.py"
+# Deploy select_next_training_run.py from the Protenix_Training repo
+SELECT_LOCAL="$TRAINING_SCRIPTS_DIR/select_next_training_run.py"
 if [[ -f "$SELECT_LOCAL" ]]; then
     local_sha=$(sha256sum "$SELECT_LOCAL" | cut -d' ' -f1)
     info "  select_next_training_run.py (sha256: ${local_sha:0:16}...)"
@@ -102,7 +107,7 @@ MISMATCH=0
 for script in "${SCRIPTS[@]}"; do
     local_path="$SCRIPT_DIR/$script"
     if [[ ! -f "$local_path" ]]; then
-        local_path="$UHRF1_SCRIPTS_DIR/$script"
+        local_path="$TRAINING_SCRIPTS_DIR/$script"
     fi
     [[ ! -f "$local_path" ]] && continue
     local_sha=$(sha256sum "$local_path" | cut -d' ' -f1)
@@ -227,6 +232,24 @@ if [[ -z "$NEW_CHAIN_PID" ]]; then
     die "chain_runner did not start (or exited immediately)!"
 fi
 info "  ✓ chain_runner PYTHON running (PID $NEW_CHAIN_PID)"
+
+# Step 5b: Verify the RUNNING code matches what we just deployed.
+# A live PID only proves *a* process started — not that it loaded the new code
+# (the 2026-05-28 "deployed fixes not active" incident). chain_runner prints a
+# startup banner `chain_runner.py  v<VERSION>  sha256:<first16>`; compare that
+# sha against the local file we deployed.
+info "=== STEP 5b: Verify running version banner ==="
+LOCAL_CR_PATH="$SCRIPT_DIR/chain_runner.py"
+[[ -f "$LOCAL_CR_PATH" ]] || LOCAL_CR_PATH="$TRAINING_SCRIPTS_DIR/chain_runner.py"
+LOCAL_CR_SHA=$(sha256sum "$LOCAL_CR_PATH" | cut -c1-16)
+RUNNING_BANNER=$($SSH_CMD "strings /data/chain_runner.stdout 2>/dev/null | grep -m1 'chain_runner.py  v'" 2>/dev/null || echo "")
+if [[ "$RUNNING_BANNER" == *"sha256:$LOCAL_CR_SHA"* ]]; then
+    info "  ✓ running chain_runner banner matches local sha256:$LOCAL_CR_SHA"
+else
+    warn "running chain_runner banner does NOT match local sha256:$LOCAL_CR_SHA"
+    warn "  banner line: ${RUNNING_BANNER:-<none found>}"
+    die "Running code does not match deployed file — WRONG CODE may be running"
+fi
 
 # Wait a bit for companions to start
 sleep 10
