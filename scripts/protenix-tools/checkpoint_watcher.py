@@ -23,11 +23,19 @@ Behaviors:
   Metadata.
 - Re-runnable / idempotent: skips files whose sha256 already matches what's in
   R2. Tracks uploaded files in /data/checkpoint_watcher_state.json.
-- Categorizes runs into idp_only/ vs interleaved/ based on run name pattern.
+- All uploads go to checkpoints/uhrf1_stella_20260519/<run_name>/<step>.pt
+  Old prefixes (idp_only, interleaved, salad_testing, early_testing) are sealed.
+- DISK CLEANUP (--cleanup, default ON): after each upload cycle, deletes local
+  checkpoint files confirmed uploaded to R2, keeping only the most recent N
+  checkpoints per run (default: 1) for crash recovery. Treats local disk as
+  scratch space and R2 as persistent storage. Peak disk use per run drops from
+  ~84 GB (10 intermediates) to ~17 GB (1 pair being written + 1 kept).
 
 Stop the daemon with: pkill -f checkpoint_watcher.py
 """
 from __future__ import annotations
+
+VERSION = "2.0.0-20260528"
 
 import argparse
 import hashlib
@@ -37,6 +45,7 @@ import re
 import socket
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
@@ -98,32 +107,17 @@ def existing_sha(s3, bucket: str, key: str) -> str | None:
         return None
 
 
+R2_CAMPAIGN_PREFIX = "uhrf1_stella_20260519"
+
+
 def categorize(run_name: str) -> str:
-    """Determine R2 prefix (idp_only vs interleaved) from run dir name.
+    """Return the R2 upload prefix for this training campaign.
 
-    Runs with self.step starting <50000 (the IDP-only era through step 49998)
-    go to idp_only/. Everything else (interleaved era from step 50000 onwards)
-    goes to interleaved/.
-
-    Recognized naming patterns:
-      - step<N>to<M>  (legacy chain format)
-      - idp_fold*     (IDP-only runs, always idp_only)
-      - pdb_block*    (general PDB runs, always interleaved)
-      - step<N>_seed* (target-step format: N is the target, run starts at N-5000)
+    As of 2026-05-19, all checkpoints go to a single campaign prefix.
+    The old prefixes (idp_only/, interleaved/, salad_testing/, early_testing/)
+    are permanently sealed and deleted from R2.
     """
-    if run_name.startswith("pdb_block"):
-        return "interleaved"
-    if run_name.startswith("idp_fold"):
-        return "idp_only"
-    m = re.search(r"step(\d+)to", run_name)
-    if m:
-        start = int(m.group(1))
-        return "interleaved" if start >= 50000 else "idp_only"
-    m = re.search(r"step(\d+)_seed", run_name)
-    if m:
-        target = int(m.group(1))
-        return "interleaved" if target >= 50000 else "idp_only"
-    return "interleaved"
+    return R2_CAMPAIGN_PREFIX
 
 
 def upload_one(s3, local_path: Path, bucket: str, key: str,
@@ -208,6 +202,155 @@ def find_pending_pairs(runs_root: Path, sizes_history: dict,
             # Sizes stable across polls — safe to upload
             pending.append((model_path, ema_path, run_dir.name, step))
     return pending
+
+
+def _delete_checkpoint_files(ckpt_dir: Path, run_name: str, step: int,
+                             reason: str) -> int:
+    """Delete all local forms of a checkpoint pair. Returns count deleted."""
+    deleted = 0
+    for pattern in [
+        f"{step}.pt",
+        f"{step}_ema_0.999.pt",
+        f"{step}.pt.age",
+        f"{step}_ema_0.999.pt.age",
+    ]:
+        p = ckpt_dir / pattern
+        if p.exists():
+            size_mb = p.stat().st_size / (1024 * 1024)
+            try:
+                p.unlink()
+                deleted += 1
+                print(f"  [cleanup] deleted {run_name}/checkpoints/{pattern} "
+                      f"({size_mb:.0f} MB, {reason})", flush=True)
+            except OSError as e:
+                print(f"  [cleanup] failed to delete {pattern}: {e}",
+                      flush=True)
+    return deleted
+
+
+def _is_boundary_step(step: int, steps_per_run: int = 5000) -> bool:
+    """A boundary checkpoint marks the end of a training run."""
+    return step > 0 and step % steps_per_run == 0
+
+
+def cleanup_uploaded_checkpoints(
+    runs_root: Path,
+    state: dict,
+    keep_latest_n: int = 1,
+    keep_boundary: bool = True,
+) -> int:
+    """Delete local checkpoint files that have been confirmed uploaded to R2.
+
+    Two-phase cleanup:
+    1. ACTIVE runs: keep the `keep_latest_n` highest-step checkpoint pairs on
+       local disk for crash recovery. Delete all older uploaded checkpoints.
+    2. COMPLETED runs: if a newer run directory exists on disk (meaning
+       chain_runner has moved on), delete non-boundary checkpoints.
+
+    CRITICAL: boundary checkpoints (step % 5000 == 0) are NEVER deleted from
+    local disk when keep_boundary=True (default). chain_runner's
+    find_latest_boundary_checkpoint scans local disk to determine where to
+    resume. Only the TWO most recent boundary checkpoints are retained; older
+    boundaries are cleaned once enough newer boundaries exist.
+
+    Both .pt cleartext and .pt.age encrypted forms are cleaned.
+    Returns the number of files deleted.
+    """
+    uploaded = state.get("uploaded", {})
+    if not uploaded:
+        return 0
+
+    # Group uploaded steps by run directory
+    runs: dict[str, list[int]] = {}
+    for key in uploaded:
+        parts = key.rsplit("/", 1)
+        if len(parts) != 2 or not parts[1].isdigit():
+            continue
+        run_name, step_str = parts
+        runs.setdefault(run_name, []).append(int(step_str))
+
+    # Identify which run dirs actually exist on disk with checkpoints
+    active_run_dirs: set[str] = set()
+    for run_dir in runs_root.iterdir():
+        if run_dir.is_dir() and (run_dir / "checkpoints").is_dir():
+            active_run_dirs.add(run_dir.name)
+
+    # Find the "current" run: the one with the highest max step on disk
+    max_step_by_run: dict[str, int] = {}
+    for run_name, steps in runs.items():
+        if run_name in active_run_dirs:
+            max_step_by_run[run_name] = max(steps)
+    current_run = max(max_step_by_run, key=max_step_by_run.get) if max_step_by_run else None
+
+    # Collect ALL boundary steps across all runs to determine which to keep
+    all_boundary_steps: list[tuple[int, str]] = []
+    for run_name, steps in runs.items():
+        for s in steps:
+            if _is_boundary_step(s):
+                all_boundary_steps.append((s, run_name))
+    all_boundary_steps.sort(key=lambda x: x[0], reverse=True)
+    # Keep the 2 most recent boundary checkpoints on local disk
+    protected_boundaries: set[tuple[int, str]] = set()
+    if keep_boundary:
+        for entry in all_boundary_steps[:2]:
+            protected_boundaries.add(entry)
+
+    deleted = 0
+    for run_name, steps in runs.items():
+        steps.sort()
+        ckpt_dir = runs_root / run_name / "checkpoints"
+        if not ckpt_dir.is_dir():
+            continue
+
+        if run_name == current_run:
+            # Active run: keep latest N for crash recovery
+            if len(steps) <= keep_latest_n:
+                continue
+            for step in steps[:-keep_latest_n]:
+                if (step, run_name) in protected_boundaries:
+                    continue
+                deleted += _delete_checkpoint_files(
+                    ckpt_dir, run_name, step, "confirmed on R2")
+        else:
+            # Completed run: delete non-boundary checkpoints
+            for step in steps:
+                if (step, run_name) in protected_boundaries:
+                    continue
+                deleted += _delete_checkpoint_files(
+                    ckpt_dir, run_name, step, "completed run, R2 is canonical")
+            # Clean error artifacts (chain_permutation .pt debug tensors)
+            errors_dir = runs_root / run_name / "errors" / "chain_permutation"
+            if errors_dir.is_dir():
+                for err_pt in errors_dir.glob("*.pt"):
+                    size_mb = err_pt.stat().st_size / (1024 * 1024)
+                    try:
+                        err_pt.unlink()
+                        deleted += 1
+                        print(f"  [cleanup] deleted {run_name}/errors/chain_permutation/{err_pt.name} "
+                              f"({size_mb:.0f} MB, completed run debug artifact)",
+                              flush=True)
+                    except OSError as e:
+                        print(f"  [cleanup] failed to delete {err_pt.name}: {e}",
+                              flush=True)
+            # Also clean .stdout logs (sidecar already mirrored to R2).
+            # Protenix appends _YYYYMMDD_HHMMSS to the run dir name, but the
+            # .stdout file uses the original launch-time name (without that
+            # suffix). Try both the full name and the base name.
+            base_name = re.sub(r"_\d{8}_\d{6}$", "", run_name)
+            for candidate in [f"{run_name}.stdout", f"{base_name}.stdout"]:
+                stdout_file = runs_root / candidate
+                if stdout_file.exists():
+                    size_mb = stdout_file.stat().st_size / (1024 * 1024)
+                    try:
+                        stdout_file.unlink()
+                        deleted += 1
+                        print(f"  [cleanup] deleted {candidate} "
+                              f"({size_mb:.1f} MB, completed run, mirrored to R2)",
+                              flush=True)
+                    except OSError as e:
+                        print(f"  [cleanup] failed to delete {candidate}: {e}",
+                              flush=True)
+    return deleted
 
 
 def load_state(state_path: Path) -> dict:
@@ -346,6 +489,18 @@ def main() -> int:
                     help="Override the auto-derived heartbeat key. If unset "
                          "and --heartbeat is on, defaults to "
                          "ops/<prefix-override or hostname>/heartbeat.json")
+    ap.add_argument("--cleanup", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="After each upload cycle, delete local checkpoint "
+                         "files that have been confirmed uploaded to R2, "
+                         "keeping only the most recent checkpoint per run "
+                         "for crash recovery. Treats local disk as scratch "
+                         "space and R2 as persistent storage. "
+                         "Default: enabled. Use --no-cleanup to disable.")
+    ap.add_argument("--cleanup-keep", type=int, default=1, metavar="N",
+                    help="Number of most-recent uploaded checkpoint pairs "
+                         "to keep per run directory (default: 1). Higher "
+                         "values use more disk but give more resume options.")
     ap.add_argument("--enforce-naming", action="store_true",
                     help="Validate every run_name against SEED_CONVENTION.md "
                          "regex before uploading. Non-compliant names are "
@@ -358,7 +513,15 @@ def main() -> int:
 
     load_env(args.env_file)
     s3 = make_s3_client()
-    print(f"=== Checkpoint watcher started ===", flush=True)
+
+    # Version banner — MANDATORY for deployment verification
+    _me = __file__
+    _sha = hashlib.sha256(open(_me, "rb").read()).hexdigest()[:16]
+    print(f"=" * 72, flush=True)
+    print(f"  checkpoint_watcher.py  v{VERSION}  sha256:{_sha}", flush=True)
+    print(f"  Started: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}", flush=True)
+    print(f"  File: {_me}", flush=True)
+    print(f"=" * 72, flush=True)
     print(f"  R2 bucket: {args.bucket}", flush=True)
     print(f"  Runs root: {args.runs_root}", flush=True)
     print(f"  State:     {args.state_file}", flush=True)
@@ -407,6 +570,18 @@ def main() -> int:
         print(f"[watcher] PROTENIX_ENCRYPT_LOCAL_CHECKPOINTS=false — encryption disabled", flush=True)
     else:
         print(f"[watcher] secure_checkpoint module unavailable (older image?) — no encryption", flush=True)
+
+    if args.cleanup:
+        print(f"[watcher] disk cleanup ENABLED (keep latest {args.cleanup_keep} per run)", flush=True)
+        try:
+            n = cleanup_uploaded_checkpoints(args.runs_root, state,
+                                             keep_latest_n=args.cleanup_keep)
+            if n:
+                print(f"[watcher] startup cleanup: deleted {n} previously-uploaded files", flush=True)
+        except Exception as e:
+            print(f"[watcher] startup cleanup error (non-fatal): {e}", flush=True)
+    else:
+        print(f"[watcher] disk cleanup DISABLED", flush=True)
 
     last_uploaded_step = max(
         (int(k.rsplit("/", 1)[-1]) for k in state.get("uploaded", {}).keys()
@@ -596,6 +771,18 @@ def main() -> int:
                             sys.exit(1)
                     except Exception as e:
                         print(f"  ! quality check error (non-fatal): {e}", flush=True)
+
+            # === Disk cleanup: delete uploaded checkpoints except latest ===
+            if args.cleanup and pending:
+                try:
+                    n_deleted = cleanup_uploaded_checkpoints(
+                        args.runs_root, state, keep_latest_n=args.cleanup_keep)
+                    if n_deleted:
+                        print(f"[{time.strftime('%H:%M:%S')}] cleanup: deleted "
+                              f"{n_deleted} files from local disk", flush=True)
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] cleanup error (non-fatal): {e}",
+                          flush=True)
 
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] ERROR: {e}", flush=True)
