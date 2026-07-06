@@ -138,7 +138,7 @@ sleep 2
 # 5. launch the training itself, in its own setsid session so SSH disconnect
 #    doesn't kill it. Pass workers via env so launch_training.sh can read it.
 echo "[run] starting training (this is the foreground process)"
-echo "[run]   log: $LOG_DIR/training_output/$RUN_NAME/training.log"
+echo "[run]   log: $LOG_DIR/launch_training_wrapper.log"
 export NUM_DL_WORKERS="$NUM_WORKERS"
 setsid nohup bash "$SCRIPTS_DIR/launch_training.sh" \
     "$RUN_NAME" \
@@ -154,8 +154,10 @@ TRAIN_PID=$!
 disown $TRAIN_PID 2>/dev/null || true
 echo "[run]   pid=$TRAIN_PID"
 
-# 6. training_monitor.py — OHLC aggregation of per-step loss from training log
-TRAINING_LOG="$LOG_DIR/training_output/$RUN_NAME/training.log"
+# 6. training_monitor.py — OHLC aggregation of per-step loss from wrapper log
+#    train.py stdout goes to launch_training_wrapper.log (not training.log inside
+#    the Protenix-created run dir, which gets a second timestamp appended to its name)
+TRAINING_LOG="$LOG_DIR/launch_training_wrapper.log"
 echo "[run] starting training_monitor → $OHLC_CSV"
 echo "[run]   watching: $TRAINING_LOG"
 setsid nohup python3 "$SCRIPTS_DIR/training_monitor.py" \
@@ -196,7 +198,7 @@ echo "[run] manifest: $LOG_DIR/run_manifest.json"
 
 echo "================================================================"
 echo "[run] all 6 processes launched. Watch with:"
-echo "  tail -f $LOG_DIR/training_output/$RUN_NAME/training.log"
+echo "  tail -f $LOG_DIR/launch_training_wrapper.log"
 echo "  tail -f $LOG_DIR/checkpoint_watcher.log"
 echo "  tail -f $OHLC_CSV"
 echo "  tail -f $RAM_CSV"

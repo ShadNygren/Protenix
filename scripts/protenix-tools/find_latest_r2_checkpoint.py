@@ -6,8 +6,8 @@ Low-priority). When a fresh pod comes up after the previous one was destroyed,
 this script tells you exactly which R2 object to resume from.
 
 What "latest" means:
-- Lists every <step>.pt under s3://vh-protenix-training/checkpoints/
-- Picks the maximum-numbered step across both idp_only/ and interleaved/
+- Lists every <step>.pt under s3://vh-protenix-training/checkpoints/uhrf1_stella_20260519/
+- Picks the maximum-numbered step
 - Returns its R2 key plus matching _ema_0.999.pt key
 - Optionally downloads the pair to a local path
 
@@ -21,11 +21,11 @@ Usage:
 
 Output (machine-readable JSON to stdout):
     {
-      "latest_step": 74998,
-      "category": "interleaved",
+      "latest_step": 4998,
+      "campaign": "uhrf1_stella_20260519",
       "run_name": "...",
-      "model_key": "checkpoints/interleaved/.../74998.pt",
-      "ema_key":   "checkpoints/interleaved/.../74998_ema_0.999.pt",
+      "model_key": "checkpoints/uhrf1_stella_20260519/.../4998.pt",
+      "ema_key":   "checkpoints/uhrf1_stella_20260519/.../4998_ema_0.999.pt",
       "model_size": 4427191403,
       "ema_size":   4427422239,
       "model_sha256": "...",
@@ -67,28 +67,30 @@ def make_s3_client():
     )
 
 
+R2_CAMPAIGN_PREFIX = "uhrf1_stella_20260519"
+
+
 def list_all_checkpoints(s3, bucket: str) -> list[dict]:
-    """Return entries for every <step>.pt (non-EMA) in checkpoints/."""
+    """Return entries for every <step>.pt (non-EMA) in the campaign prefix."""
     paginator = s3.get_paginator("list_objects_v2")
     out: list[dict] = []
-    for prefix in ("checkpoints/idp_only/", "checkpoints/interleaved/"):
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get("Contents", []) or []:
-                key = obj["Key"]
-                m = re.match(rf"{re.escape(prefix)}([^/]+)/(\d+)\.pt$", key)
-                if not m:
-                    continue
-                run_name = m.group(1)
-                step = int(m.group(2))
-                category = prefix.split("/")[1]
-                out.append({
-                    "category": category,
-                    "run_name": run_name,
-                    "step": step,
-                    "model_key": key,
-                    "model_size": obj["Size"],
-                    "model_etag": obj["ETag"].strip('"'),
-                })
+    prefix = f"checkpoints/{R2_CAMPAIGN_PREFIX}/"
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []) or []:
+            key = obj["Key"]
+            m = re.match(rf"{re.escape(prefix)}([^/]+)/(\d+)\.pt$", key)
+            if not m:
+                continue
+            run_name = m.group(1)
+            step = int(m.group(2))
+            out.append({
+                "campaign": R2_CAMPAIGN_PREFIX,
+                "run_name": run_name,
+                "step": step,
+                "model_key": key,
+                "model_size": obj["Size"],
+                "model_etag": obj["ETag"].strip('"'),
+            })
     return out
 
 
@@ -144,9 +146,9 @@ def main() -> int:
     entries.sort(key=lambda e: e["step"])
     latest = entries[-1]
     step = latest["step"]
-    category = latest["category"]
+    campaign = latest["campaign"]
     run_name = latest["run_name"]
-    base_key = f"checkpoints/{category}/{run_name}"
+    base_key = f"checkpoints/{campaign}/{run_name}"
     ema_key = f"{base_key}/{step}_ema_0.999.pt"
 
     try:
@@ -162,7 +164,7 @@ def main() -> int:
 
     result: dict = {
         "latest_step": step,
-        "category": category,
+        "campaign": campaign,
         "run_name": run_name,
         "model_key": latest["model_key"],
         "ema_key": ema_key,
