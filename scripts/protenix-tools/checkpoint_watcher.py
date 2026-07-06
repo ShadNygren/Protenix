@@ -35,7 +35,7 @@ Stop the daemon with: pkill -f checkpoint_watcher.py
 """
 from __future__ import annotations
 
-VERSION = "2.0.0-20260528"
+VERSION = "2.1.0-20260705"
 
 import argparse
 import hashlib
@@ -231,6 +231,56 @@ def _delete_checkpoint_files(ckpt_dir: Path, run_name: str, step: int,
 def _is_boundary_step(step: int, steps_per_run: int = 5000) -> bool:
     """A boundary checkpoint marks the end of a training run."""
     return step > 0 and step % steps_per_run == 0
+
+
+def validate_checkpoint_integrity(
+    model_path: Path,
+    ema_path: Path,
+    step: int,
+    min_bytes: int,
+    verify_load_boundaries: bool,
+) -> tuple[bool, str]:
+    """Sanity-check a checkpoint pair BEFORE uploading it to R2.
+
+    Guards against Run-3-style silent torch.save() corruption: on 2026-05-19 a
+    save produced a 1.8 GB file where ~4.2 GB was expected, the EMA was never
+    written, and nothing noticed until the NEXT run tried to load it and crashed
+    (3 failed resumes). Uploading a corrupt checkpoint is worse than not
+    uploading it — it can become the canonical R2 copy and cascade.
+
+    Checks (cheap first):
+    1. Both model and EMA files exist and are >= min_bytes. A stable-but-tiny
+       file (the stability check already ran) is treated as corrupt.
+    2. Optionally, for boundary checkpoints only, a CPU torch.load()
+       deserialization test (catches corruption a size check misses). Lazy
+       torch import; if torch is unavailable the size check alone governs.
+
+    Returns (ok, reason). reason is empty when ok.
+    """
+    for label, p in (("model", model_path), ("ema", ema_path)):
+        try:
+            sz = p.stat().st_size
+        except OSError as e:
+            return False, f"{label} file stat failed: {e}"
+        if sz < min_bytes:
+            return False, (
+                f"{label} file {p.name} is {sz / 1e9:.2f} GB, below the "
+                f"{min_bytes / 1e9:.2f} GB minimum (suspected torch.save "
+                f"corruption)"
+            )
+
+    if verify_load_boundaries and _is_boundary_step(step):
+        try:
+            import torch  # lazy: keep the watcher importable without torch
+        except Exception:
+            return True, ""  # torch unavailable; size check already passed
+        for label, p in (("model", model_path), ("ema", ema_path)):
+            try:
+                torch.load(str(p), map_location="cpu", weights_only=True)
+            except Exception as e:
+                return False, f"{label} file {p.name} failed torch.load: {e}"
+
+    return True, ""
 
 
 def cleanup_uploaded_checkpoints(
@@ -501,6 +551,23 @@ def main() -> int:
                     help="Number of most-recent uploaded checkpoint pairs "
                          "to keep per run directory (default: 1). Higher "
                          "values use more disk but give more resume options.")
+    ap.add_argument("--min-checkpoint-bytes", type=int,
+                    default=int(os.environ.get("WATCHER_MIN_CHECKPOINT_BYTES",
+                                               3_600_000_000)),
+                    help="Minimum acceptable size (bytes) for a model/EMA "
+                         "checkpoint file. Files smaller than this are treated "
+                         "as corrupt (the Run-3 torch.save incident produced "
+                         "1.8 GB where ~4.2 GB was expected) and are NOT "
+                         "uploaded to R2. Retained locally for inspection and "
+                         "recorded to ops/<prefix>/corrupt_checkpoints.jsonl. "
+                         "Default: 3.6 GB (env WATCHER_MIN_CHECKPOINT_BYTES).")
+    ap.add_argument("--verify-load-boundaries", action="store_true",
+                    help="Additionally run a CPU torch.load() deserialization "
+                         "test on boundary (step %% 5000 == 0) checkpoints "
+                         "before upload. Catches corruption a size check "
+                         "misses, at the cost of RAM + a few seconds per "
+                         "boundary. Requires torch; silently skipped if torch "
+                         "is unavailable.")
     ap.add_argument("--enforce-naming", action="store_true",
                     help="Validate every run_name against SEED_CONVENTION.md "
                          "regex before uploading. Non-compliant names are "
@@ -622,6 +689,9 @@ def main() -> int:
         ),
     ]
     violations_reported: set[str] = set()
+    # Corrupt checkpoints already reported this session — dedup so a stable
+    # corrupt file (retained on disk, re-seen every poll) is logged once.
+    corrupt_reported: set[str] = set()
 
     while True:
         # Heartbeat: written BEFORE the poll work, so even if the poll throws
@@ -657,6 +727,45 @@ def main() -> int:
             pending = find_pending_pairs(args.runs_root, sizes_history, state,
                                          skip_stability_check=args.once)
             for model_path, ema_path, run_name, step in pending:
+                # Corruption gate — never upload a too-small/undeserializable
+                # checkpoint. It is retained locally (not added to state, so
+                # cleanup won't delete it) for inspection.
+                ok, reason = validate_checkpoint_integrity(
+                    model_path, ema_path, step,
+                    args.min_checkpoint_bytes, args.verify_load_boundaries)
+                if not ok:
+                    ck = f"{run_name}/{step}"
+                    if ck not in corrupt_reported:
+                        corrupt_reported.add(ck)
+                        print(f"[{time.strftime('%H:%M:%S')}] CORRUPT CHECKPOINT "
+                              f"SKIPPED: {run_name}/{step} — {reason}. NOT "
+                              f"uploaded to R2; local file retained for "
+                              f"inspection.", flush=True)
+                        corrupt_rec = {
+                            "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "run_name": run_name,
+                            "step": step,
+                            "reason": reason,
+                            "hostname": socket.gethostname(),
+                            "prefix_override": args.prefix_override,
+                        }
+                        ck_prefix = args.prefix_override or socket.gethostname()
+                        try:
+                            ck_key = f"ops/{ck_prefix}/corrupt_checkpoints.jsonl"
+                            try:
+                                existing = s3.get_object(
+                                    Bucket=args.bucket, Key=ck_key
+                                )["Body"].read().decode()
+                            except Exception:
+                                existing = ""
+                            s3.put_object(
+                                Bucket=args.bucket, Key=ck_key,
+                                Body=(existing + json.dumps(corrupt_rec) + "\n").encode(),
+                                ContentType="application/x-ndjson")
+                        except Exception as e:
+                            print(f"  ! failed to record corruption to R2: {e}",
+                                  flush=True)
+                    continue
                 # Per-run naming check (once per run, not per checkpoint)
                 if args.enforce_naming and run_name not in violations_reported:
                     if not any(rx.match(run_name) for rx in NAMING_REGEXES):
